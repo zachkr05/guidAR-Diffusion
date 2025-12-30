@@ -1,14 +1,15 @@
 # UNet_class_lora.py
-
 import math
 import torch
-import toch.nn as nn
+import torch.nn as nn
 import torch.nn.functional as F
-from time_emb import SinusoidalEmbeddings
-from lora import LoRA
-from attention import AttentionBlock
-from unet_parts import *
+from .time_emb import SinusoidalEmbeddings
+from .lora import LoRA
+from .attention import AttentionBlock
+from .unet_parts import *
 
+
+NUM_CLASSES=4
 class UNet(nn.Module):
     """
     Each obstacle class has its own LoRA, allowing independent fine-tuning.
@@ -78,11 +79,11 @@ class UNet(nn.Module):
         )
         
         # Class-specific LoRA at bottleneck and decoder
-        self.lora_mid = ClassSpecificLoRA(
+        self.lora_mid = LoRA(
             channels[-1], num_classes=num_classes, rank=lora_rank, alpha=lora_alpha
         )
         self.lora_ups = nn.ModuleList([
-            ClassSpecificLoRA(
+            LoRA(
                 base_channels * mult, num_classes=num_classes, rank=lora_rank, alpha=lora_alpha
             )
             for mult in reversed(channel_mults)

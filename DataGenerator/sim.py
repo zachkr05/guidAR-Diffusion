@@ -34,7 +34,7 @@ def calculate_repulsive_potential_multiclass(point, obstacles_by_class):
         amp = props['amp']
         sigma = props['sigma']
 
-        obs = np.asarry(obstacles, dtype=float).reshape(-1, 2)
+        obs = np.asarray(obstacles, dtype=float).reshape(-1, 2)
         diff = obs - p
         d2 = np.einsum('ij,ij->i', diff, diff)
         total += float(np.sum(amp * np.exp(-0.5 * d2 / (sigma ** 2))))

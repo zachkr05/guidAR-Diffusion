@@ -1,9 +1,9 @@
 
 import math
 import torch
-import toch.nn as nn
+import torch.nn as nn
 import torch.nn.functional as F
-from time_emb import SinusoidalEmbeddings
+from .time_emb import SinusoidalEmbeddings
 
 
 class AttentionBlock(nn.Module):

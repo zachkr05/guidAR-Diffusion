@@ -3,6 +3,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .attention import AttentionBlock
+
 
 class ResidualConvBlock(nn.Module):
     """Conv block with residual connection and time conditioning"""
