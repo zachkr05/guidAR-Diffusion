@@ -181,18 +181,28 @@ class GPRFiLMManager:
         
         c = current_costmap[region]
         t = target_costmap[region]
-        m = mask[region]
+        #m = mask[region]
         delta = t - c
         
-        A = np.column_stack([c * m, m])
-        try:
-            params, _, _, _ = np.linalg.lstsq(A, delta, rcond=None)
-            gamma, beta = params
-        except:
-            gamma = np.mean(delta / (c + 1e-8))
-            beta = np.mean(delta)
+
+
+        mean_delta = np.mean(delta)
+        max_delta = np.max(np.abs(delta))
+
+
+        beta = float(np.clip(mean_delta * 3.0, -1.0, 1.0))  # Direct cost addition
+        gamma = float(np.clip(max_delta * 2.0, -2.0, 2.0))  # Multiplicative boost
         
-        return float(np.clip(gamma, -2.0, 5.0)), float(np.clip(beta, -1.0, 2.0))
+        return gamma, beta
+        #A = np.column_stack([c * m, m])
+        #try:
+        #    params, _, _, _ = np.linalg.lstsq(A, delta, rcond=None)
+        #    gamma, beta = params
+        #except:
+        #    gamma = np.mean(delta / (c + 1e-8))
+        #    beta = np.mean(delta)
+        
+        #return float(np.clip(gamma, -2.0, 5.0)), float(np.clip(beta, -1.0, 2.0))
 
 
 def apply_gpr_film_modulation(
