@@ -131,5 +131,5 @@ class MultiClassCostmapDataset(Dataset):
         
         cond = np.concatenate([class_maps, goal_map[None, :, :]], axis=0)  # [NUM_CLASSES+1, H, W]
 
-        return torch.from_numpy(cond), torch.from_numpy(x0)
+        return torch.from_numpy(cond), torch.from_numpy(x0), obstacles_by_class, cm.goal
 

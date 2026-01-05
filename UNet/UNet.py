@@ -121,14 +121,18 @@ class UNet(nn.Module):
         h = self.mid_block1(h, t_emb)
         h = self.mid_attn(h)
         h = self.mid_block2(h, t_emb)
-        
+    
+        class_acts_at_res = F.interpolate(
+        class_activations, size=h.shape[2:], mode='bilinear', align_corners=True
+        )
+
         # Class-specific LoRA at bottleneck
-        h = h + self.lora_mid(h, class_acts_downsampled[-1])
+        h = h + self.lora_mid(h, class_acts_at_res)
         
         # Upsampling with skip connections
         for i, up in enumerate(self.ups):
             skip = skips.pop()
-            class_acts_downsampled.pop()
+            #class_acts_downsampled.pop()
             h = up(h, skip, t_emb)
             
             # Class-specific LoRA at each decoder level
