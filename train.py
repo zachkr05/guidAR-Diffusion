@@ -1,4 +1,3 @@
-
 import argparse
 import os
 import numpy as np
@@ -7,19 +6,17 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from diffusion_utils import schedule_betas, q_sample
-from DataGenerator.dataset_costmap import MultiClassCostmapDataset
-from DataGenerator.sim import NUM_CLASSES, OBSTACLE_CLASSES
+from DataGenerator.dataset_costmap import MultiClassCostmapDataset, get_cond_channels
+from DataGenerator.sim import NUM_CLASSES, OBSTACLE_CLASSES, NUM_ORIENTATIONS, ORIENTATIONS
 from UNet.UNet import UNet
 
 
-def count_params(model):
-    return
 @torch.no_grad()
 def sample_ddpm_with_cond(model, cond, betas, alphas, alpha_bar, device="cuda"):
     """
     Algorithm 2
 
-    cond: [B, NUM_CLASSES+1, H, W]
+    cond: [B, NUM_CLASSES*3+1, H, W]  # Updated channel count
     """
     model.eval()
     T = betas.shape[0]
@@ -55,9 +52,12 @@ def train(args):
     for i in range(NUM_CLASSES):
         print(f"  Class {i}: {OBSTACLE_CLASSES[i]['name']} "
               f"(amp={OBSTACLE_CLASSES[i]['amp']}, sigma={OBSTACLE_CLASSES[i]['sigma']})")
-  
+    
+    print(f"Number of orientations: {NUM_ORIENTATIONS}")
+    for i in range(NUM_ORIENTATIONS):
+        print(f"  Orientation {i}: {ORIENTATIONS[i]['name']} ({np.degrees(ORIENTATIONS[i]['angle']):.0f}°)")
 
-    #init variables for diffusion process
+    # Init variables for diffusion process
     T = args.timesteps
     betas, alphas, alpha_bar = schedule_betas(T, args.beta_start, args.beta_end, device=device)
 
@@ -76,27 +76,34 @@ def train(args):
         num_workers=args.num_workers,
         pin_memory=True
     )
-   
-    model = UNet(lora_rank = args.lora_rank).to(device)
+    
+    # Calculate input channels: conditioning + noisy costmap
+    cond_channels = get_cond_channels()  # NUM_CLASSES * 3 + 1
+    in_channels = cond_channels + 1       # + 1 for noisy costmap
+    
+    model = UNet(
+        in_channels=in_channels,
+        lora_rank=args.lora_rank
+    ).to(device)
 
-     
-    print(f"\nDataset: MultiClassCostmapDataset")
+    print(f"\nDataset: MultiClassCostmapDataset with Orientations")
     print(f"  Samples: {len(ds)}")
     print(f"  Obstacles per class: {args.min_obs_per_class} to {args.n_obs_per_class}")
-    print(f"  Conditioning channels: {NUM_CLASSES + 1} (classes + goal)")
-    print(f"  Input channels to model: {NUM_CLASSES + 2} (classes + goal + noisy costmap)")
-
+    print(f"  Conditioning channels: {cond_channels}")
+    print(f"    - {NUM_CLASSES} occupancy channels (one per class)")
+    print(f"    - {NUM_CLASSES * 2} orientation channels (sin/cos per class)")
+    print(f"    - 1 goal channel")
+    print(f"  Input channels to model: {in_channels} (conditioning + noisy costmap)")
 
     params_to_train = model.parameters()
     lr = args.lr
 
     # Print parameter counts
-    total_params = np.sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"\nTotal parameters: {total_params:,}")
     print(f"LoRA rank: {args.lora_rank}")
     print(f"Learning rate: {lr}")
 
-   
     params_to_train = [p for p in params_to_train if p.requires_grad]
     optimizer = torch.optim.AdamW(params_to_train, lr=lr, weight_decay=args.weight_decay)
     
@@ -108,15 +115,13 @@ def train(args):
     else:
         scheduler = None
 
-    os.makedirs(args.ckpt_dir, exist_ok=True )
-
-
+    os.makedirs(args.ckpt_dir, exist_ok=True)
 
     model.train()
     step = 0
     best_loss = float('inf')
 
-    print(f"\nStarting training for {args.epochs} epochs...")
+    print(f"\nStrting training for {args.epochs} epochs...")
     print(f"Steps per epoch: {len(dl)}")
     print("-" * 60)
 
@@ -124,8 +129,12 @@ def train(args):
         epoch_loss = 0.0
         epoch_steps = 0
 
-        for cond, x0 in dl:
-            # cond: [B, NUM_CLASSES+1, H, W] - class occupancies + goal
+        for batch in dl:
+            # Dataset returns: (cond, x0, obstacles_by_class, goal)
+            # We only need cond and x0 for training
+            cond, x0 = batch[0], batch[1]
+            
+            # cond: [B, NUM_CLASSES*3+1, H, W] - occupancy + orientation + goal
             # x0: [B, 1, H, W] - ground truth costmap
             cond = cond.to(device)
             x0 = x0.to(device)
@@ -138,10 +147,9 @@ def train(args):
             # Forward diffusion (add noise)
             xt, noise = q_sample(x0, t, alpha_bar)
 
-            # Concatenate: [noisy_costmap, class_0, class_1, ..., class_N, goal]
-            # Model expects: [class_0, ..., class_N, goal, noisy_costmap]
-            # So reorder: cond is [classes, goal], we add xt at the end
-            x_in = torch.cat([cond, xt], dim=1)  # [B, NUM_CLASSES+2, H, W]
+            # Concatenate: [cond, noisy_costmap]
+            # cond is [occupancy_classes, orientation_sin_cos, goal]
+            x_in = torch.cat([cond, xt], dim=1)  # [B, NUM_CLASSES*3+2, H, W]
 
             # Predict noise
             pred_noise = model(x_in, t)
@@ -173,7 +181,6 @@ def train(args):
             if step % args.sample_every == 0 and step > 0:
                 model.eval()
                 with torch.no_grad():
-                    # For sampling, we need [cond, noisy] format
                     sample_cond = cond[:4]
                     sample = sample_ddpm_with_cond(model, sample_cond, betas, alphas, alpha_bar, device)
                 model.train()
@@ -251,10 +258,11 @@ def get_args():
     parser.add_argument("--ckpt-dir", type=str, default="./checkpoints", help="Directory to save checkpoints")
     parser.add_argument("--use-scheduler", action="store_true", help="Use Cosine LR Scheduler")
     
-    # Optional: Train only specific class? (If None, trains multiclass)
+    # Optional: Train only specific class?
     parser.add_argument("--class-id", type=int, default=None, help="Specific class ID to focus on (optional)")
 
     return parser.parse_args()
+
 
 if __name__ == "__main__":
     args = get_args()

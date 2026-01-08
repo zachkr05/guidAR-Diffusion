@@ -1,7 +1,8 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from .sim import Costmap, OBSTACLE_CLASSES, NUM_CLASSES
+from .sim import (Costmap, OBSTACLE_CLASSES, NUM_CLASSES, 
+                  ORIENTATIONS, NUM_ORIENTATIONS, orientation_to_sincos)
 
 
 def make_goal_map(H, W, goal_coord, sigma=5.0):
@@ -33,7 +34,7 @@ def make_class_occupancy_maps(H, W, obstacles_by_class):
     
     Args:
         H, W: dimensions
-        obstacles_by_class: {class_id: [(r, c), ...], ...}
+        obstacles_by_class: {class_id: [{'pos': (r, c), 'orientation': int}, ...], ...}
     
     Returns:
         np.ndarray: [NUM_CLASSES, H, W] - one channel per class
@@ -45,33 +46,80 @@ def make_class_occupancy_maps(H, W, obstacles_by_class):
         if len(obstacles) == 0:
             continue
         
-        # Use class-specific sigma for conditioning too
         sigma = OBSTACLE_CLASSES[class_id]['sigma']
         
-        for (r, c) in obstacles:
+        for obs in obstacles:
+            r, c = obs['pos']
             dist_sq = (rows - r)**2 + (cols - c)**2
             blob = np.exp(-dist_sq / (2 * sigma**2))
             occ[class_id] = np.maximum(occ[class_id], blob)
     
     return occ.astype(np.float32)
 
+
+def make_orientation_maps(H, W, obstacles_by_class):
+    """
+    Create orientation encoding maps using sin/cos representation.
+    
+    For each class, creates 2 channels: sin(theta) and cos(theta) weighted by Gaussian.
+    This avoids discontinuity issues with raw angle representation.
+    
+    Args:
+        H, W: dimensions
+        obstacles_by_class: {class_id: [{'pos': (r, c), 'orientation': int}, ...], ...}
+    
+    Returns:
+        np.ndarray: [NUM_CLASSES * 2, H, W] - sin/cos channels per class
+    """
+    rows, cols = np.ogrid[:H, :W]
+    # 2 channels per class: sin and cos
+    orient_maps = np.zeros((NUM_CLASSES * 2, H, W), dtype=np.float32)
+    
+    for class_id, obstacles in obstacles_by_class.items():
+        if len(obstacles) == 0:
+            continue
+        
+        sigma = OBSTACLE_CLASSES[class_id]['sigma']
+        sin_channel = class_id * 2
+        cos_channel = class_id * 2 + 1
+        
+        for obs in obstacles:
+            r, c = obs['pos']
+            orientation = obs['orientation']
+            sin_val, cos_val = orientation_to_sincos(orientation)
+            
+            dist_sq = (rows - r)**2 + (cols - c)**2
+            weight = np.exp(-dist_sq / (2 * sigma**2))
+            
+            # Weight sin/cos by Gaussian blob
+            orient_maps[sin_channel] = np.maximum(
+                orient_maps[sin_channel], weight * sin_val
+            )
+            orient_maps[cos_channel] = np.maximum(
+                orient_maps[cos_channel], weight * cos_val
+            )
+    
+    return orient_maps.astype(np.float32)
+
+
 class MultiClassCostmapDataset(Dataset):
     """
     Dataset with multiple obstacle classes (chair, table, person, wall).
+    Each obstacle has a position and orientation.
     
     Each class has different amp/sigma, creating different cost patterns.
-    Conditioning has one channel per class + goal channel.
     
-    Conditioning shape: [NUM_CLASSES + 1, H, W]
-        - Channels 0 to NUM_CLASSES-1: obstacle classes
-        - Channel NUM_CLASSES: goal
+    Conditioning shape: [NUM_CLASSES * 3 + 1, H, W]
+        - Channels 0 to NUM_CLASSES-1: obstacle occupancy per class
+        - Channels NUM_CLASSES to NUM_CLASSES*3-1: orientation sin/cos per class (2 per class)
+        - Last channel: goal
     """
     
     def __init__(self, n_samples=100000, H=64, W=64, n_obs_per_class=3, 
                  min_obs_per_class=0, min_total_obs=1):
         """
         Args:
-            n_samples: number of samples
+            n_samples: number of smples
             H, W: grid dimensions
             n_obs_per_class: max obstacles per class
             min_obs_per_class: min obstacles per class
@@ -86,13 +134,14 @@ class MultiClassCostmapDataset(Dataset):
     def __len__(self):
         return self.n_samples
 
-    def __getitem__(self, idx):
+    def _generate_sample(self):
+        """Generate a random sample with obstacles, orientations, and goal."""
         H, W = self.H, self.W
 
         # Random goal
         goal = (np.random.randint(0, H), np.random.randint(0, W))
 
-        # Generate obstacles for each class
+        # Generate obstacles for each class with orientations
         obstacles_by_class = {}
         total_obs = 0
         
@@ -102,7 +151,11 @@ class MultiClassCostmapDataset(Dataset):
             for _ in range(n_obs):
                 r = np.random.randint(0, H)
                 c = np.random.randint(0, W)
-                obstacles.append((r, c))
+                orientation = np.random.randint(0, NUM_ORIENTATIONS)
+                obstacles.append({
+                    'pos': (r, c),
+                    'orientation': orientation
+                })
             obstacles_by_class[class_id] = obstacles
             total_obs += len(obstacles)
         
@@ -111,8 +164,24 @@ class MultiClassCostmapDataset(Dataset):
             class_id = np.random.randint(0, NUM_CLASSES)
             r = np.random.randint(0, H)
             c = np.random.randint(0, W)
-            obstacles_by_class[class_id].append((r, c))
+            orientation = np.random.randint(0, NUM_ORIENTATIONS)
+            obstacles_by_class[class_id].append({
+                'pos': (r, c),
+                'orientation': orientation
+            })
             total_obs += 1
+
+        return obstacles_by_class, goal
+
+    def __getitem__(self, idx):
+        """
+        Returns:
+            cond: [NUM_CLASSES * 3 + 1, H, W] - conditioning tensor
+            x0: [1, H, W] - ground truth costmap
+        """
+        H, W = self.H, self.W
+        
+        obstacles_by_class, goal = self._generate_sample()
 
         # Generate costmap
         cm = Costmap(H, W)
@@ -125,11 +194,60 @@ class MultiClassCostmapDataset(Dataset):
         x0 = cost01 * 2.0 - 1.0
         x0 = x0[None, :, :]  # [1, H, W]
 
-        # Create conditioning: one channel per class + goal
+        # Create conditioning maps
         class_maps = make_class_occupancy_maps(H, W, obstacles_by_class)  # [NUM_CLASSES, H, W]
+        orient_maps = make_orientation_maps(H, W, obstacles_by_class)     # [NUM_CLASSES * 2, H, W]
         goal_map = make_goal_map(H, W, goal)  # [H, W]
         
-        cond = np.concatenate([class_maps, goal_map[None, :, :]], axis=0)  # [NUM_CLASSES+1, H, W]
+        # Stack: occupancy + orientation + goal
+        cond = np.concatenate([
+            class_maps,                 # [NUM_CLASSES, H, W]
+            orient_maps,                # [NUM_CLASSES * 2, H, W]
+            goal_map[None, :, :]        # [1, H, W]
+        ], axis=0)  # Total: [NUM_CLASSES * 3 + 1, H, W]
 
-        return torch.from_numpy(cond), torch.from_numpy(x0), obstacles_by_class, cm.goal
+        return torch.from_numpy(cond), torch.from_numpy(x0)
 
+    def get_sample_with_metadata(self, idx=None):
+        """
+        Get a sample with full metadata (for visualization/debugging).
+        
+        Returns:
+            cond: [NUM_CLASSES * 3 + 1, H, W]
+            x0: [1, H, W]
+            obstacles_by_class: dict
+            goal: tuple
+        """
+        H, W = self.H, self.W
+        
+        obstacles_by_class, goal = self._generate_sample()
+
+        # Generate costmap
+        cm = Costmap(H, W)
+        cm.goal = np.array(goal, dtype=np.float32)
+        cost = cm.calculateCostMapMulticlassVectorized(obstacles_by_class)
+
+        # Normalize to [-1, 1]
+        cost = cost.astype(np.float32)
+        cost01 = (cost - cost.min()) / (cost.max() - cost.min() + 1e-8)
+        x0 = cost01 * 2.0 - 1.0
+        x0 = x0[None, :, :]
+
+        # Create conditioning maps
+        class_maps = make_class_occupancy_maps(H, W, obstacles_by_class)
+        orient_maps = make_orientation_maps(H, W, obstacles_by_class)
+        goal_map = make_goal_map(H, W, goal)
+        
+        cond = np.concatenate([
+            class_maps,
+            orient_maps,
+            goal_map[None, :, :]
+        ], axis=0)
+
+        return torch.from_numpy(cond), torch.from_numpy(x0), obstacles_by_class, goal
+
+
+# Convenience function to get conditioning channel count
+def get_cond_channels():
+    """Returns the number of conditioning channels."""
+    return NUM_CLASSES * 3 + 1  # occupancy + sin/cos orientation + goal
