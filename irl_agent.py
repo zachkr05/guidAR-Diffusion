@@ -95,7 +95,7 @@ def compute_geometric_delta(
     user_trajectory,
     H: int,
     W: int,
-    cost_increase: float = 0.5,
+    cost_increase: float = 0.15,
     cost_decrease: float = 0.15,
     n_samples: int = 100
 ) -> np.ndarray:

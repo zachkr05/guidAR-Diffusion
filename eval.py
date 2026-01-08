@@ -450,7 +450,7 @@ def run_full_pipeline(model, dataset, args, device="cuda"):
         # Simulate user adjustment (targeting class 0 = chairs)
         adj_rows, adj_cols = add_user_adjustments_robust(
             rows, cols, obstacles_by_class,
-            target_class=0, avoidance_radius=30.0, push_strength=7
+            target_class=1, avoidance_radius=10.0, push_strength=-7
         )
         
         # Find edit sequences
@@ -606,7 +606,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, default="./checkpoints/best_model.pt")
     
     args = parser.parse_args()
-    seed_env(42)
+    seed_env(55)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     

@@ -1,6 +1,5 @@
-
 """
-Class-Isolated Preference Adapter (Strict Isolation Version).
+Class-Isolated Preference Adapter (Residual Delta Version).
 
 CHANNEL STACK (Total: 3 + 2×NUM_CLASSES):
 =============================================================
@@ -15,10 +14,10 @@ Index | Name              | Purpose
 6     | Class 1 Angle     | Table Facing Angle
 ...   | ...               | Repeat for all classes
 
-CHANGES FROM V1:
-- Removed "Frontalness" (Simpler, geometric agnostic).
-- Removed "Refine" layer (Strict class isolation).
-- Sharper Gating (Gaussian instead of Linear).
+CHANGES FROM V2 (FiLM):
+- Removed "Gating" (Network learns localization from EDF input).
+- Changed Output to "Delta" (Additive correction) instead of Gamma/Beta.
+- Improved Stability (No fighting against decay factors).
 """
 
 import torch
@@ -57,11 +56,6 @@ def compute_edf(obstacle_positions, H, W):
 def compute_orientation_map(obstacle_positions, obstacle_orientations, H, W, sigma=5.0):
     """
     Compute Orientation Angle Map.
-    
-    Instead of vector components, we simply encode the facing angle normalized to [0, 1].
-    (0.0 = 0 rad, 1.0 = 2pi rad).
-    
-    We weight this by proximity so empty space implies 'no orientation'.
     """
     if len(obstacle_positions) == 0:
         return np.zeros((H, W), dtype=np.float32)
@@ -86,7 +80,7 @@ def compute_orientation_map(obstacle_positions, obstacle_orientations, H, W, sig
         dist_sq = (rows - obs_r)**2 + (cols - obs_c)**2
         weight = np.exp(-dist_sq / (2 * sigma**2))
         
-        # Accumulate weighted angle (simplification: assumes nearby objects have similar alignment)
+        # Accumulate weighted angle
         angle_map += weight * norm_angle
         weight_map += weight
     
@@ -114,7 +108,7 @@ def build_feature_stack(
     num_classes=4
 ):
     """
-    Build the Clean feature stack (NO Frontalness).
+    Build the Clean feature stack.
     Returns: [3 + 2*num_classes, H, W] numpy array
     """
     channels = []
@@ -154,9 +148,9 @@ class ClassSpecificBlock(nn.Module):
     """
     Processing block for a single obstacle class.
     
-    NOW STRICLY ISOLATED:
+    RESIDUAL UPDATE:
     - Inputs: Global Context + [Class EDF, Class Angle]
-    - Output: Gamma/Beta strictly gated by EDF.
+    - Output: Single channel 'Delta' (Additive Correction).
     """
     def __init__(self, global_channels=3, class_channels=2, hidden_dim=32):
         super().__init__()
@@ -170,10 +164,11 @@ class ClassSpecificBlock(nn.Module):
             nn.GELU(),
             nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1),
             nn.GELU(),
-            nn.Conv2d(hidden_dim // 2, 2, kernel_size=1)  # gamma, beta
+            # CHANGED: Output 1 channel (Delta) instead of 2 (Gamma, Beta)
+            nn.Conv2d(hidden_dim // 2, 1, kernel_size=1) 
         )
         
-        # Initialize to zero
+        # Initialize to zero so we start with Identity (No change)
         nn.init.zeros_(self.net[-1].weight)
         nn.init.zeros_(self.net[-1].bias)
     
@@ -182,26 +177,20 @@ class ClassSpecificBlock(nn.Module):
         Args:
             global_features: [B, 3, H, W]
             class_features: [B, 2, H, W] - EDF, Angle
-            class_edf: [B, 1, H, W] - For gating
+            class_edf: [B, 1, H, W] - Still passed for consistency, but logic uses class_features
         """
         x = torch.cat([global_features, class_features], dim=1)
-        out = self.net(x) # [B, 2, H, W]
+        out = self.net(x) # [B, 1, H, W]
         
-        # === SHARPER GATING ===
-        # Instead of linear (1-EDF), use Gaussian decay.
-        # This ensures modifications ONLY happen very close to the object.
-        # sigma=0.2 means at EDF=0.2 (20% of diag), weight is exp(-1) ~= 0.36
-        # At EDF=0.5, weight is exp(-6.25) ~= 0.001 (Zero).
-        decay_factor = 25.0 
-        proximity_gate = torch.exp(-decay_factor * (class_edf ** 2))
-        
-        return out * proximity_gate
+        # === NO HARD GATING ===
+        # We rely on the network to learn gating from the input EDF (inside class_features).
+        # This allows the "influence" to be as wide as the user demonstrates.
+        return out
 
 
 class ClassIsolatedPreferenceAdapter(nn.Module):
     """
-    Preference adapter with REMOVED Refinement layer.
-    Pure summation of strictly gated signals.
+    Pure summation of additive deltas.
     """
     
     def __init__(self, num_classes=4, global_channels=3, class_channels=2, hidden_dim=32):
@@ -216,8 +205,6 @@ class ClassIsolatedPreferenceAdapter(nn.Module):
             ClassSpecificBlock(global_channels, class_channels, hidden_dim)
             for _ in range(num_classes)
         ])
-        
-        # Removed self.refine!
         
     def forward(self, features):
         B, C, H, W = features.shape
@@ -237,14 +224,14 @@ class ClassIsolatedPreferenceAdapter(nn.Module):
             class_out = self.class_blocks[c](global_features, class_features, class_edf)
             class_outputs.append(class_out)
         
-        # Sum contributions (Safe now because each block is strictly gated)
+        # Sum all deltas
         output = sum(class_outputs)
         
         return output
 
 
 # =============================================================================
-# Online Preference Learner (Updated for 2 class channels)
+# Online Preference Learner (Residual Delta Version)
 # =============================================================================
 
 class OnlinePreferenceLearner:
@@ -277,18 +264,28 @@ class OnlinePreferenceLearner:
         return torch.from_numpy(features_np).float().unsqueeze(0).to(self.device)
     
     def predict(self, features):
+        """
+        API COMPATIBILITY MODE:
+        Returns (delta, dummy_zeros) so eval.py thinks it's getting (gamma, beta).
+        """
         self.model.eval()
         with torch.no_grad():
-            output = self.model(features)
-            gamma = output[:, 0:1, :, :]
-            beta = output[:, 1:2, :, :]
-        return gamma, beta
+            delta = self.model(features)
+            
+            # Create dummy zeros for API compatibility
+            dummy_beta = torch.zeros_like(delta)
+            
+        return delta, dummy_beta
     
-    def apply_modulation(self, base_costmap_tensor, gamma, beta):
-        modulated = base_costmap_tensor * (1.0 + gamma) + beta
+    def apply_modulation(self, base_costmap_tensor, delta, dummy_beta=None):
+        """
+        RESIDUAL LOGIC: Base + Delta.
+        Ignores dummy_beta (which is passed by eval.py).
+        """
+        modulated = base_costmap_tensor + delta
         return torch.clamp(modulated, 0, 1)
 
-    # ... (Rest of training logic stays mostly same, just ensure aug_features handles new shape) ...
+    # ... (Rest of training logic) ...
 
     def augment_batch(self, features, targets):
         """Augmentation via spatial shifts."""
@@ -337,14 +334,14 @@ class OnlinePreferenceLearner:
             # Augment
             b_features, b_target = self.augment_batch(b_features, b_target)
             
-            # Extract base costmap (Channel 0) for reconstruction check
+            # Extract base costmap (Channel 0)
             b_base_aug = b_features[:, 0:1, :, :]
             
-            output = self.model(b_features)
-            gamma = output[:, 0:1, :, :]
-            beta = output[:, 1:2, :, :]
+            # === CHANGED: PREDICT DELTA ===
+            delta = self.model(b_features)
             
-            predicted = self.apply_modulation(b_base_aug, gamma, beta)
+            # Apply residual (base + delta)
+            predicted = self.apply_modulation(b_base_aug, delta)
             
             # Loss
             diff = (predicted - b_target) ** 2
@@ -354,7 +351,8 @@ class OnlinePreferenceLearner:
             weights = torch.ones_like(diff)
             weights[change_mask] = 20.0
             
-            loss = (diff * weights).mean() + 0.001 * (gamma**2 + beta**2).mean()
+            # Regularize Delta magnitude
+            loss = (diff * weights).mean() + 0.001 * (delta**2).mean()
             
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
