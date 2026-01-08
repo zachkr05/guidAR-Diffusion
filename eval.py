@@ -29,7 +29,6 @@ from film import (
     OnlinePreferenceLearner, 
     build_feature_stack,
     compute_edf,
-    compute_frontalness
 )
 from irl_agent import compute_geometric_delta
 
@@ -523,7 +522,7 @@ def run_full_pipeline(model, dataset, args, device="cuda"):
     print("\n" + "=" * 60)
     print("DEPLOYMENT PHASE")
     print("=" * 60)
-    print(f"\n{learner.get_params_summary()}\n")
+    #print(f"\n{learner.get_params_summary()}\n")
     
     # Show final class weight norms
     class_norms = learner.get_class_weights_norm()
