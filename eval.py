@@ -25,7 +25,7 @@ from UNet.UNet import UNet
 from train import sample_ddpm_with_cond
 
 # Import the class-isolated learner
-from directional_film import (
+from film import (
     OnlinePreferenceLearner, 
     build_feature_stack,
     compute_edf,
