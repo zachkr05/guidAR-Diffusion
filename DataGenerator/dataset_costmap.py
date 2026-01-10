@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from scipy.ndimage import distance_transform_edt
 from torch.utils.data import Dataset
 from .sim import (Costmap, OBSTACLE_CLASSES, NUM_CLASSES, 
                   ORIENTATIONS, NUM_ORIENTATIONS, orientation_to_sincos)
@@ -101,6 +102,67 @@ def make_orientation_maps(H, W, obstacles_by_class):
     
     return orient_maps.astype(np.float32)
 
+def make_edf_maps(H,W,obstacles_by_class, normalize=True):
+    edf_maps = np.zeros((NUM_CLASSES, H, W), dtype=np.float32)
+
+    for class_id in range(NUM_CLASSES):
+        obstacles = obstacles_by_class.get(class_id, [])
+
+        if len(obstacles) == 0:
+            edf_maps[class_id] = np.ones((H,W), dtype=np.float32)
+            if normalize:
+                pass
+            else:
+                edf_maps[class_id] *= np.sqrt(H**2 + W**2)
+        else:
+            mask = np.ones((H,W), dtype=bool)
+            for obs in obstacles:
+                r,c = obs['pos']
+                r_idx = int(np.clip(r,0,H-1))
+                c_idx = int(np.clip(c,0,W-1))
+                mask[r_idx,c_idx] = False
+
+            edf = distance_transform_edt(mask)
+
+            if normalize:
+                max_dist = np.sqrt(H**2 + W**2)
+                edf = edf / max_dist
+                
+            edf_maps[class_id] = edf.astype(np.float32)
+        
+    return edf_maps
+
+
+def make_density_map(H, W, obstacles_by_class, sigma=10.0):
+    """
+    Create local object density map.
+    
+    Each pixel contains a measure of how many obstacles are nearby,
+    weighted by Gaussian distance.
+    
+    Args:
+        H, W: dimensions
+        obstacles_by_class: {class_id: [{'pos': (r, c), 'orientation': int}, ...], ...}
+        sigma: spread of density influence
+    
+    Returns:
+        np.ndarray: [H, W] - density map
+    """
+    rows, cols = np.ogrid[:H, :W]
+    density = np.zeros((H, W), dtype=np.float32)
+    
+    # Count all obstacles weighted by distance
+    for class_id, obstacles in obstacles_by_class.items():
+        for obs in obstacles:
+            r, c = obs['pos']
+            dist_sq = (rows - r)**2 + (cols - c)**2
+            density += np.exp(-dist_sq / (2 * sigma**2))
+    
+    # Normalize to [0, 1]
+    if density.max() > 0:
+        density = density / density.max()
+    
+    return density.astype(np.float32)
 
 class MultiClassCostmapDataset(Dataset):
     """
@@ -198,12 +260,18 @@ class MultiClassCostmapDataset(Dataset):
         class_maps = make_class_occupancy_maps(H, W, obstacles_by_class)  # [NUM_CLASSES, H, W]
         orient_maps = make_orientation_maps(H, W, obstacles_by_class)     # [NUM_CLASSES * 2, H, W]
         goal_map = make_goal_map(H, W, goal)  # [H, W]
-        
+        edf_maps = make_edf_maps(H, W, obstacles_by_class)                # [NUM_CLASSES, H, W]
+        density_map = make_density_map(H, W, obstacles_by_class)          # [H, W] 
+
+
+
         # Stack: occupancy + orientation + goal
         cond = np.concatenate([
             class_maps,                 # [NUM_CLASSES, H, W]
             orient_maps,                # [NUM_CLASSES * 2, H, W]
-            goal_map[None, :, :]        # [1, H, W]
+            edf_maps, 
+            goal_map[None, :, :],# [1, H, W]
+            density_map[None, :, :]
         ], axis=0)  # Total: [NUM_CLASSES * 3 + 1, H, W]
 
         return torch.from_numpy(cond), torch.from_numpy(x0)
@@ -237,10 +305,14 @@ class MultiClassCostmapDataset(Dataset):
         class_maps = make_class_occupancy_maps(H, W, obstacles_by_class)
         orient_maps = make_orientation_maps(H, W, obstacles_by_class)
         goal_map = make_goal_map(H, W, goal)
-        
+        edf_maps = make_edf_maps(H,W,obstacles_by_class) 
+        density_map = make_density_map(H,W,obstacles_by_class) 
+
         cond = np.concatenate([
             class_maps,
             orient_maps,
+            edf_maps,
+            density_map[None, :, :],
             goal_map[None, :, :]
         ], axis=0)
 
@@ -250,4 +322,4 @@ class MultiClassCostmapDataset(Dataset):
 # Convenience function to get conditioning channel count
 def get_cond_channels():
     """Returns the number of conditioning channels."""
-    return NUM_CLASSES * 3 + 1  # occupancy + sin/cos orientation + goal
+    return NUM_CLASSES * 4 + 2  # occupancy + sin/cos orientation + goal + density

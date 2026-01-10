@@ -12,5 +12,7 @@ from .dataset_costmap import (
     make_goal_map,
     make_class_occupancy_maps,
     make_orientation_maps,
+    make_edf_maps,
+    make_density_map,
     get_cond_channels
 )

@@ -89,7 +89,7 @@ class UNet(nn.Module):
             for mult in reversed(channel_mults)
         ])
     
-    def forward(self, x, t):
+    def forward(self, x, t,interaction_mask=None):
         """
         Args:
             x: [B, in_channels, H, W] 
@@ -116,7 +116,7 @@ class UNet(nn.Module):
             class_acts_downsampled.append(
                 F.interpolate(class_acts_downsampled[-1], size=h.shape[2:], mode='bilinear', align_corners=True)
             )
-        
+
         # Bottleneck
         h = self.mid_block1(h, t_emb)
         h = self.mid_attn(h)
@@ -134,28 +134,40 @@ class UNet(nn.Module):
             skip = skips.pop()
             #class_acts_downsampled.pop()
             h = up(h, skip, t_emb)
-            
+            current_mask = F.interpolate(interaction_mask, size=h.shape[2:], mode='bilinear') if interaction_mask is not None else None 
             # Class-specific LoRA at each decoder level
             # Use class activations at this resolution
-            current_class_acts = F.interpolate(
-                class_activations, size=h.shape[2:], mode='bilinear', align_corners=True
-            )
-            h = h + self.lora_ups[i](h, current_class_acts)
-        
-        return self.final_conv(h)
-    
+            current_class_acts = F.interpolate(class_activations, size=h.shape[2:], mode='bilinear')
+
+            # Pass mask to LoRA
+            h = h + self.lora_ups[i](h, class_activations=current_class_acts, spatial_mask=current_mask)
+
+        return self.final_conv(h)    
+
+
     def freeze_base_model(self):
-        """Freeze everything except LoRA."""
-        for name, param in self.named_parameters():
-            if 'lora' not in name:
-                param.requires_grad = False
-    
+        """
+        Freeze all parameters in the UNet, then unfreeze ONLY the LoRA layers.
+        """
+        # 1. Freeze EVERYTHING first
+        for param in self.parameters():
+            param.requires_grad = False
+            
+        # 2. Unfreeze LoRA Mid Block
+        for param in self.lora_mid.parameters():
+            param.requires_grad = True
+            
+        # 3. Unfreeze LoRA Up Blocks
+        for lora in self.lora_ups:
+            for param in lora.parameters():
+                param.requires_grad = True
+
     def unfreeze_all(self):
         """Unfreeze all parameters."""
         for param in self.parameters():
             param.requires_grad = True
     
-    def freeze_all_lora_except_class(self, class_id):
+    def freeze_all_lora_except_classes(self, class_id):
         """
         Freeze base model AND all LoRA except for one class.
         Use this when fine-tuning for a specific class.
@@ -167,9 +179,9 @@ class UNet(nn.Module):
         self.freeze_base_model()
         
         # Freeze all LoRA except target class
-        self.lora_mid.freeze_all_except(class_id)
+        self.lora_mid.freeze_all_except_classes(class_id)
         for lora in self.lora_ups:
-            lora.freeze_all_except(class_id)
+            lora.freeze_all_except_classes(class_id)
     
     def get_lora_parameters(self):
         """Return all LoRA parameters."""
@@ -192,4 +204,10 @@ class UNet(nn.Module):
         total = sum(p.numel() for p in self.parameters())
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         return total, trainable
-
+    def get_multi_class_lora_parameters(self, class_ids):
+        """Aggregate parameters from all LoRA layers for the optimizer."""
+        params = []
+        params.extend(self.lora_mid.get_multi_class_parameters(class_ids))
+        for lora in self.lora_ups:
+            params.extend(lora.get_multi_class_parameters(class_ids))
+        return params
