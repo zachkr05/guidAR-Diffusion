@@ -62,13 +62,9 @@ class CompositionalModel(nn.Module):
             # Orientation Sin/Cos for this peer (2 channels)
             peer_feats.append(full_cond[:, idx_orient + i*2 : idx_orient + i*2 + 2])
         
-        # Add density channel (1 channel) - THIS WAS COMMENTED OUT BUT NEEDED!
-        density = full_cond[:, idx_dens : idx_dens + 1]
-        peer_feats.append(density)
+        #context_input = torch.cat(peer_feats, dim=1)
         
-        context_input = torch.cat(peer_feats, dim=1)
-        
-        return base_input, context_input
+        return base_input
 
     def forward(self, x_t, t, cond, training_phase='base'):
         expert_outputs = []

@@ -1,12 +1,3 @@
-"""
-Inverse Reinforcement Learning Agent - Geometric Delta Computation
-
-IMPROVED VERSION:
-- Broader influence regions (not tied to displacement magnitude)
-- Optional class-aware propagation (when user avoids one chair front, all chair fronts learn)
-- Minimum sigma to ensure learnable gradients
-"""
-
 import numpy as np
 from scipy import ndimage
 from scipy.interpolate import interp1d
