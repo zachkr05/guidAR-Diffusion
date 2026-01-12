@@ -73,9 +73,19 @@ def make_geodesic_costmap(H, W, obstacles_binary_map, goal):
     """
     Creates a 'flood fill' map where value = distance to goal walking around walls.
     """
+    # Ensure goal is a tuple of ints
+    goal_r = int(np.clip(goal[0], 0, H - 1))
+    goal_c = int(np.clip(goal[1], 0, W - 1))
+    goal = (goal_r, goal_c)
+    
     # 1. Create a cost array for movement
-    costs = np.ones((H, W))
+    costs = np.ones((H, W), dtype=np.float64)
     costs[obstacles_binary_map > 0] = 1000.0 
+    
+    # CRITICAL: Ensure goal cell is traversable!
+    # If goal is inside obstacle, clear it
+    if obstacles_binary_map[goal]:
+        costs[goal] = 1.0
     
     # 2. Use MCP (Minimum Cost Path) / Dijkstra
     mcp = skimage.graph.MCP(costs, fully_connected=True)
@@ -83,19 +93,25 @@ def make_geodesic_costmap(H, W, obstacles_binary_map, goal):
     # 3. Calculate distance from every pixel TO the goal
     cumulative_costs, _ = mcp.find_costs(starts=[goal])
     
-    # 4. Clip for visualization
-    cumulative_costs = np.clip(cumulative_costs, 0, 200)
+    # 4. Clip for visualization (handle unreachable areas)
+    max_reasonable = H + W  # Max possible path length
+    cumulative_costs = np.clip(cumulative_costs, 0, max_reasonable * 2)
 
     min_val = cumulative_costs.min()
     max_val = cumulative_costs.max()
     
     # Handle flat map case
-    if max_val == min_val:
-        return np.zeros((H, W), dtype=np.float32)
+    if max_val - min_val < 1e-6:
+        print(f"WARNING: Flat costmap after processing! min={min_val}, max={max_val}, goal={goal}")
+        # Return a simple distance-based fallback
+        rows, cols = np.ogrid[:H, :W]
+        dist = np.sqrt((rows - goal[0])**2 + (cols - goal[1])**2)
+        dist_norm = dist / (dist.max() + 1e-8)
+        return (1.0 - dist_norm * 2.0).astype(np.float32)
 
     # Normalize to -1 to 1 for Diffusion
     norm_dist = (cumulative_costs - min_val) / (max_val - min_val + 1e-8)
-    return (1.0 - norm_dist) * 2.0 - 1.0
+    return ((1.0 - norm_dist) * 2.0 - 1.0).astype(np.float32)
 
 
 class Costmap:
@@ -104,7 +120,7 @@ class Costmap:
         self.W = W
         self.cost = np.zeros((H, W), dtype=np.float32)
         self.obstacles = []
-        self.obstacles_by_class = {}
+        self.obstacles_byclass = {}
         self.robot = [H, W]
         self.goal = [0, 0]
 
@@ -130,8 +146,8 @@ class Costmap:
             
             for obs in obstacles:
                 r, c = obs['pos']
-                dist_sqrt = (rows - r)**2 + (cols - c)**2
-                mask = dist_sqrt <= (sigma**2)
+                dist_sq = (rows - r)**2 + (cols - c)**2
+                mask = dist_sq <= (sigma**2)
                 binary_map[mask] = True
 
         reward_map = make_geodesic_costmap(self.H, self.W, binary_map, self.goal)

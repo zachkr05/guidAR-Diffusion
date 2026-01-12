@@ -249,6 +249,10 @@ class MultiClassCostmapDataset(Dataset):
         cm = Costmap(H, W)
         cm.goal = np.array(goal, dtype=np.float32)
         cost = cm.calculateCostMapMulticlassVectorized(obstacles_by_class)
+        
+
+        if cost.max() - cost.min() < 0.01:
+            print(f"WARNING: Flat costmap! Goal={goal}, num_obstacles={sum(len(v) for v in obstacles_by_class.values())}")
 
         # Normalize to [-1, 1]
         cost = cost.astype(np.float32)

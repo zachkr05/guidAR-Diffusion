@@ -1,20 +1,64 @@
-import torch
-import torch.nn.functional as F
+
+#diffusion_utils.py
 
 
-def schedule_betas(num_steps, beta_start, beta_end, device="cuda"):
-    #For Section 2, eqn 2, We need to schudule betas. 
-    betas = torch.linspace(beta_start, beta_end, num_steps, device=device)
-    alphas = 1.0 - betas
-    alpha_bar = torch.cumprod(alphas,dim=0)
-    return betas, alphas, alpha_bar
+"""
+Functions for sampling and diffusion scheduling etc
+"""
 
 
-def q_sample(x0, t, alpha_bar, noise = None):
-    if noise is None:
-        noise = torch.randn_like(x0)
-    a = alpha_bar[t].view(-1,1,1,1)
-    return torch.sqrt(a) * x0 + torch.sqrt(1-a) * noise, noise #eqn (4) via reparameterization E[x] = E[mew + std* epsilon] = mew + std * E[epsilon] = mew + std * 0 (no noise at final x) = mew
+"""
+    Diffusion optimization https://arxiv.org/abs/2102.09672
+"""
+def cosine_beta_schedule(timesteps, s=0.008):
+    steps = timesteps + 1
+    x = torch.linspace(0, timesteps, steps)
+    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0.0001, 0.9999)
 
+@torch.no_grad()
+def sample_x0_prediction(model, cond, args, device):
+    """Reverse Diffusion Loop for x0 prediction."""
+    model.eval()
+    B, _, H, W = cond.shape
+    T = args.timesteps
+    img = torch.randn((B, 1, H, W), device=device)
+    
+    betas = cosine_beta_schedule(T).to(device)
+    alphas = 1. - betas
+    alphas_cumprod = torch.cumprod(alphas, dim=0) 
+
+    for i in tqdm(reversed(range(0, T)), desc='Sampling', total=T):
+        t = torch.full((B,), i, device=device, dtype=torch.long)
+        
+        # Predict Clean Image
+        pred_x0 = model(img, t, cond, training_phase='base')
+        
+        if i == 0:
+            alpha_bar_prev = torch.tensor(1.0, device=device)
+        else:
+            t_prev = torch.full((B,), i-1, device=device, dtype=torch.long)
+            alpha_bar_prev = extract(alphas_cumprod, t_prev, img.shape)
+        
+        alpha_t = extract(alphas, t, img.shape)
+        alpha_bar_t = extract(alphas_cumprod, t, img.shape)
+        beta_t = extract(betas, t, img.shape)
+        
+        coeff1 = beta_t * torch.sqrt(alpha_bar_prev) / (1. - alpha_bar_t)
+        coeff2 = (1. - alpha_bar_prev) * torch.sqrt(alpha_t) / (1. - alpha_bar_t)
+        
+        posterior_mean = coeff1 * pred_x0 + coeff2 * img
+        
+        if i > 0:
+            noise = torch.randn_like(img)
+            posterior_variance = beta_t * (1. - alpha_bar_prev) / (1. - alpha_bar_t)
+            log_var = torch.log(torch.clamp(posterior_variance, min=1e-20))
+            img = posterior_mean + torch.exp(0.5 * log_var) * noise
+        else:
+            img = posterior_mean
+
+    return img
 
 
