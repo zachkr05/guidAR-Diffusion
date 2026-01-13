@@ -1,6 +1,6 @@
 import numpy as np
 import skimage.graph
-
+import matplotlib.pyplot as plt
 
 class Costmap:
     def __init__(self, H=64, W=64):
@@ -10,63 +10,96 @@ class Costmap:
         self.obstacles = []
         self.obstacles_byclass = {}
         self.robot = [H, W]
-        self.goal = [0, 0]
+        self.goal = [10, 10]
 
-    def calculateCostmaps(self, costmaps):
+    def calculateCostmaps(self, costmaps, occupancy_map):
+    
+        mcps = {}
+        max_reasonable = (self.H + self.W)  * 2# Max possible path lengthv
 
-        mcps = np.zeros((len(costmaps)))
-    # 4. Clip for visualization (handle unreachable areas)
-        max_reasonable = self.H + self.W  # Max possible path lengthv
-        for i in range(len(costmaps)):
-            costmaps[i][occupancy_map[i] > 0] = 1000
-            mcp = skimage.graph.MCP(costmaps[i], fully_connected=True)
-            cumulative_costs, _ = mcp.find_costs(starts=[goal]) 
+
+        
+        for key, value in occupancy_map.items():
+            
+            current_cost = costmaps[key].copy().astype(np.float32) +1.0
+       
+
+            mcps[key] = np.zeros((self.H, self.W))
+
+
+            #occupancy_map[i] = 
+            current_cost[occupancy_map[key] > 0] = 1000
+
+            mcp = skimage.graph.MCP(current_cost, fully_connected=True)
+            cumulative_costs, _ = mcp.find_costs(starts=[self.goal]) 
+            cumulative_costs[np.isinf(cumulative_costs)] = max_reasonable*2
+
             cumulative_costs = np.clip(cumulative_costs, 0, max_reasonable * 2)
-            norm_dist = (cumulative_costs - min_val) / (max_val - min_val + 1e-8)
-            mcps[i] = ((1.0 - norm_dist) * 2.0 - 1.0).astype(np.float32)
+            
+            min_val = np.min(cumulative_costs)
+            max_val = np.max(cumulative_costs)
+            
+            denom = max_val -min_val
+            if denom< 1e-5:
+                denom = 1
+
+            norm_dist = (cumulative_costs - min_val) / (denom)
+            
+            mcps[key] = -((1.0 - norm_dist) * 2.0 - 1.0).astype(np.float32)
 
         return mcps
 
-    def calculateCostMapMulticlassVectorized(self, obstacles_by_class: dict):
+    def calculateCost(self, obstacles_by_class: dict):
+        """
+        """
+
+
         self.obstacles_by_class = obstacles_by_class
         
         rows, cols = np.ogrid[:self.H, :self.W]
         num_classes = len(obstacles_by_class)
         
-        occupancy_map = np.zeros((num_classes, self.H, self.W))
-        
-        for idx, obstacle in enumerate(obstacles_by_class.values()):
-
-            obstacle_rows = []
-            obstacle_cols = []
-
+        occupancy_map = {}
+        binary_occupancy_map = {}
+        costmaps = {}
+        for idx, (key, obstacle) in enumerate(obstacles_by_class.items()):
+            #print(key)
+            
+            occupancy_map[key] = np.zeros((self.H, self.W))
+            costmaps[key] = np.zeros((self.H, self.W))
+            binary_occupancy_map[key] = np.zeros((self.H, self.W))
 
             for item in obstacle:
                 r, c = item['pos']
-                obstacle_rows.append(r)
-                obstacle_cols.append(c)
-
-            occupancy_map[idx][obstacle_rows, obstacle_cols] = 1
+                radius = item['rad']
+                dist_sqrt = (rows - r)**2 + (cols - c)**2
+                mask = (dist_sqrt <= radius**2)
+                occupancy_map[key][mask] = 1
+                binary_occupancy_map[key][r,c] = 1 
         
-        #print(occupancy_map)
-
-        costmaps = np.empty((num_classes,), dtype=object)
-        costmaps = [np.ogrid[0:self.H, 0:self.W] for _ in range(num_classes)]
-#        print(costmaps)
-
-
-        final_mcps = self.calculateCostmaps(occupancy_map)
+        final_mcps = self.calculateCostmaps(costmaps, occupancy_map)
         
-        print(final_mcps)
+        self.visualize_cm(final_mcps, occupancy_map)
+
+        return final_mcps, occupancy_map, binary_occupancy_map
+
+    def visualize_cm(self, final_mcps, occupancy_map):
+        #figures = [plt.figure(num=i, figsize=(self.H, self.W)) for i in range(len(occupancy_map))]
         
-        return final_mcps, occupancy_map
+        for key, value in final_mcps.items():
+            plt.imshow(final_mcps[key], cmap='hot', interpolation='nearest')
+            plt.colorbar()
+            plt.show()
+
+        #print(figures)
+    
 
 if __name__ == "__main__":
     cm = Costmap()
 
     data = {
-    1: [{'pos': (0, 1)}, {'pos': (2, 2)}],
-    2: [{'pos': (1, 1)}, {'pos': (0, 1)}]  # Note: (0, 1) is a duplicate
+        'chair': [{'pos': (0, 1), 'rad': 2}, {'pos': (2, 2), 'rad': 2}],
+        'table': [{'pos': (1, 1), 'rad': 2}, {'pos': (0, 1), 'rad': 2}]  # Note: (0, 1) is a duplicate
     }
     cm.calculateCostMapMulticlassVectorized(data)
     #cm.calculateCostMapMulticlassVetorized(data)
