@@ -1,6 +1,7 @@
 import numpy as np
 import skimage.graph
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 class Costmap:
     def __init__(self, H=64, W=64):
@@ -82,18 +83,66 @@ class Costmap:
         self.visualize_cm(final_mcps, occupancy_map)
 
         return final_mcps, occupancy_map, binary_occupancy_map
-
-    def visualize_cm(self, final_mcps, occupancy_map):
-        #figures = [plt.figure(num=i, figsize=(self.H, self.W)) for i in range(len(occupancy_map))]
-        
-        for key, value in final_mcps.items():
-            plt.imshow(final_mcps[key], cmap='hot', interpolation='nearest')
-            plt.colorbar()
-            plt.show()
-
-        #print(figures)
     
-
+    def visualize_cm(self, final_mcps, occupancy_map):
+        for key, value in final_mcps.items():
+            plt.figure(figsize=(10, 10))  # Create a new figure for each MCP
+            plt.imshow(final_mcps[key], cmap='hot', interpolation='nearest')
+            
+            # Add goal circle
+            circle = patches.Circle((self.goal[1], self.goal[0]), 1, color='blue', fill=False, linewidth=2)
+            plt.gca().add_patch(circle)
+            
+            # Color map for different obstacle classes
+            colors = plt.cm.Set1(range(len(self.obstacles_by_class)))
+            color_idx = 0
+            
+            # Track which classes we've added to legend
+            legend_elements = []
+            
+            for obstacle_class, obstacles in self.obstacles_by_class.items():
+                class_color = colors[color_idx]
+                color_idx += 1
+                
+                # Add one legend entry per class
+                legend_elements.append(patches.Patch(color=class_color, label=obstacle_class))
+                
+                for obstacle in obstacles:
+                    r, c = obstacle['pos']
+                    r = float(r)
+                    c = float(c)
+                    radius = obstacle['rad']
+                    radius = float(radius.flatten()[0])
+                    
+                    # Draw circle for each obstacle
+                    circle = patches.Circle((c, r), radius, color=class_color, fill=False, linewidth=2)
+                    plt.gca().add_patch(circle)
+                    
+                    # Improved text positioning - place label above the obstacle
+                    label_offset = radius + 2  # Place text just outside the circle
+                    plt.text(c, r - label_offset, obstacle_class, 
+                            color='white',  # White text for visibility
+                            fontsize=10,
+                            ha='center',
+                            va='bottom',
+                            bbox=dict(boxstyle='round,pad=0.3', 
+                                     facecolor=class_color, 
+                                     alpha=0.8,
+                                     edgecolor='black',
+                                     linewidth=1))
+            
+            # Add legend with custom elements
+            plt.legend(handles=legend_elements, loc='upper right', fontsize=10)
+            
+            # Add goal to legend
+            goal_patch = patches.Circle((0, 0), 1, color='blue', fill=False, linewidth=2)
+            plt.gca().add_artist(plt.legend([goal_patch], ['Goal'], loc='upper left'))
+            
+            plt.colorbar()
+            plt.title(f'MCP: {key}')
+            plt.xlabel('X')
+            plt.ylabel('Y')
+            plt.show()
 if __name__ == "__main__":
     cm = Costmap()
 
@@ -101,5 +150,5 @@ if __name__ == "__main__":
         'chair': [{'pos': (0, 1), 'rad': 2}, {'pos': (2, 2), 'rad': 2}],
         'table': [{'pos': (1, 1), 'rad': 2}, {'pos': (0, 1), 'rad': 2}]  # Note: (0, 1) is a duplicate
     }
-    cm.calculateCostMapMulticlassVectorized(data)
+    cm.calculateCost(data)
     #cm.calculateCostMapMulticlassVetorized(data)
