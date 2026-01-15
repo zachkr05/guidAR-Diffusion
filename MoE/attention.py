@@ -30,19 +30,16 @@ class AttentionBlock(nn.Module):
         qkv = self.qkv(h)
         q, k, v = qkv.chunk(3, dim=1)
 
-        q = q.view(B, self.num_heads, self.head_dim, H * W)
-        k = k.view(B, self.num_heads, self.head_dim, H * W)
-        v = v.view(B, self.num_heads, self.head_dim, H * W)
+        q = q.view(B, self.num_heads, self.head_dim, H * W).transpose(2, 3)
+        k = k.view(B, self.num_heads, self.head_dim, H * W).transpose(2,3)
+        v = v.view(B, self.num_heads, self.head_dim, H * W).transpose(2,3)
 
-        q = q.transpose(-2, -1)
-        
-        attn = torch.matmul(q,k) * self.scale
+        attn = torch.matmul(q,k.transpose(-2,-1)) * self.scale
         attn = F.softmax(attn, dim=-1)
 
-        attn = attn.transpose(-2,-1)
-        out = torch.matmul(v,attn)
+        out = torch.matmul(attn,v)
 
-        out = out.reshape(B,C,H,W)
+        out = out.transpose(2,3).contiguous().view(B,C,H,W)
         out=self.proj(out)
 
         return x + out

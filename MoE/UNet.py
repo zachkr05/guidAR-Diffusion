@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .time_emb import SinusoidalEmbeddings
 from .attention import AttentionBlock
+from .LoRA import LoRA
+
 
 class TimeAwareBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_dim):
@@ -31,7 +33,7 @@ class TimeAwareBlock(nn.Module):
         return h
 
 class LightweightUNet(nn.Module):
-    def __init__(self, in_channels, context_channels, out_channels=1, base_channels=32, time_dim=128):
+    def __init__(self, in_channels, context_channels, out_channels=1, base_channels=32, time_dim=128, lora_rank = 4, lora_scale = 1.0):
         super().__init__()
         
         self.time_mlp = nn.Sequential(
@@ -43,36 +45,20 @@ class LightweightUNet(nn.Module):
 
         self.enc1 = self.conv_block(in_channels, base_channels, time_dim)
         self.enc2 = self.conv_block(base_channels, base_channels*2, time_dim)
-        self.center = self.conv_block(base_channels*2, base_channels*4, time_dim)
-       
-        self.context = nn.Sequential(
-                nn.Conv2d(context_channels, base_channels*2, 3, padding=1),
-                nn.SiLU(),
-                nn.AvgPool2d(4),
-                nn.Conv2d(base_channels*2, base_channels * 4, 1)
-                ) #This and the attention block is what the user trains
 
+        self.center = self.conv_block(base_channels*2, base_channels*4, time_dim) 
         self.mid_attn = AttentionBlock(base_channels*4, num_heads=4)
 
-        self.dec2 = self.conv_block(base_channels*6, base_channels*2, time_dim)
-        
+        self.dec2 = self.conv_block(base_channels*6, base_channels*2, time_dim) 
         self.dec1 = self.conv_block(base_channels*3, base_channels, time_dim)
+
+        self.lora_pre_dec2 = LoRA(base_channels * 6, rank =lora_rank, scale = lora_scale)
+        self.lora_between = LoRA(base_channels * 2, rank =lora_rank, scale = lora_scale)
 
         self.final = nn.Conv2d(base_channels, out_channels, kernel_size=1)
 
     def conv_block(self, in_c, out_c, time_dim):
         return TimeAwareBlock(in_c, out_c, time_dim)
-
-    def set_finetune(self, active=True):
-        for param in self.parameters():
-            param.requires_grad = not active
-
-        if active:
-            for param in self.context.parameters():
-                param.requires_grad = True
-
-            for param in self.mid_attn.parameters():
-                param.requires_grad = True
 
     def forward(self, x, t, context_stack = None):
         t_emb = self.time_mlp(t)
@@ -80,45 +66,31 @@ class LightweightUNet(nn.Module):
         e1 = self.enc1(x, t_emb)
         e2 = self.enc2(F.max_pool2d(e1, 2), t_emb)
 
-        c = self.center(F.max_pool2d(e2, 2), t_emb)
-       
-        if context_stack is not None:
-            c_context = self.context(context_stack)
-            c = c + c_context
-        
+        c=self.center(F.max_pool2d(e2,2), t_emb)
         c = self.mid_attn(c)
-        c_up = F.interpolate(c, scale_factor=2, mode='bilinear', align_corners=False)
-        d2 = self.dec2(torch.cat([c_up, e2], dim=1), t_emb)
 
-        d2_up = F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False)
-        d1 = self.dec1(torch.cat([d2_up, e1], dim=1), t_emb)
+        c_up = F.interpolate(c, scale_factor=2, mode='bilinear', align_corners=False)
+        
+        d2_in = torch.cat([c_up,e2], dim=1)
+        d2_in = self.lora_pre_dec2(d2_in)
+        d2 = self.dec2(d2_in, t_emb)
+        d2 = self.lora_between(d2)
+
+        d2_up = F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False) 
+        d1_in = torch.cat([d2_up, e1], dim=1)
+        d1 = self.dec1(d1_in, t_emb)
 
         return self.final(d1)
 
-    def set_active_peers(self, active_peer_indices):
-        """
-        NEW: Surgical masking.
-        Registers a hook to zero out gradients for context channels 
-        that belong to peers NOT in the active set.
-        """
-        # We assume input channels are ordered: [Peer0_EDF, Peer0_Sin, Peer0_Cos, Peer1_EDF...]
-        CHANNELS_PER_PEER = 3 
-        
-        def filter_grads_hook(grad):
-            # grad shape: [Out, In_Channels, K, K] for the first Conv layer
-            mask = torch.zeros_like(grad)
-            
-            for peer_idx in active_peer_indices:
-                start_ch = peer_idx * CHANNELS_PER_PEER
-                end_ch = start_ch + CHANNELS_PER_PEER
-                
-                # Boundary check to prevent crashing if indices are off
-                if start_ch < grad.shape[1]:
-                    mask[:, start_ch:end_ch, :, :] = 1.0
-            
-            return grad * mask
 
-        # Attach to the first layer of the context sidecar
-        # self.context is a Sequential, so index [0] is the first Conv2d
-        if hasattr(self.context[0], 'weight'):
-            self.context[0].weight.register_hook(filter_grads_hook)
+    def set_finetune(self, active=True):
+        for p in self.parameters():
+            p.requires_grad = not active
+
+        if active:
+            for p in self.lora_pre_dec2.parameters():
+                p.requires_grad = True
+            for p in self.lora_between.parameters():
+                p.requires_grad = True
+
+
