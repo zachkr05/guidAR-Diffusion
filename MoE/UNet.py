@@ -43,7 +43,7 @@ class LightweightUNet(nn.Module):
             nn.Linear(time_dim, time_dim)
         )
 
-        self.enc1 = self.conv_block(in_channels, base_channels, time_dim)
+        self.enc1 = self.conv_block(1+in_channels, base_channels, time_dim)
         self.enc2 = self.conv_block(base_channels, base_channels*2, time_dim)
 
         self.center = self.conv_block(base_channels*2, base_channels*4, time_dim) 
@@ -60,7 +60,9 @@ class LightweightUNet(nn.Module):
     def conv_block(self, in_c, out_c, time_dim):
         return TimeAwareBlock(in_c, out_c, time_dim)
 
-    def forward(self, x, t, context_stack = None):
+    def forward(self, x_t, t, conditioning):
+        
+        x=torch.cat([x_t, conditoning], dim=1)
         t_emb = self.time_mlp(t)
 
         e1 = self.enc1(x, t_emb)
