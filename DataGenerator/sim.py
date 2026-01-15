@@ -80,7 +80,7 @@ class Costmap:
         
         final_mcps = self.calculateCostmaps(costmaps, occupancy_map)
         
-        self.visualize_cm(final_mcps, occupancy_map)
+        #self.visualize_cm(final_mcps, occupancy_map)
 
         return final_mcps, occupancy_map, binary_occupancy_map
     

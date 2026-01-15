@@ -56,15 +56,51 @@ class CostmapDataset(Dataset):
 
         cm = Costmap()
         cm.goal = self.goal
-        costmaps, occupancy_maps = cm.calculateCost(obstacles_by_class)
+        costmaps, radii_maps, binary_occupancy_map = cm.calculateCost(obstacles_by_class)
+        
+        goal_map = np.zeros((self.H, self.W))
+
         #Build conditioning vectors
 
         #BINARY occupancy map
         #goal state
         #radius
+        
+        features = {}
+        targets = {}
+        for key, cm in (costmaps.items()):
+            channel_list = []
+            
+            cost_np = costmaps[key].copy()
+            occ_np = radii_maps[key].copy()
+            binary_np = binary_occupancy_map[key].copy()
+            
+            cost_t = torch.from_numpy(cost_np)
+            occ_t = torch.from_numpy(occ_np)
+            binary_t = torch.from_numpy(binary_np)
+            goal_t = torch.from_numpy(goal_map)
+
+            cost_t = cost_t.unsqueeze(0)
+            occ_t = occ_t.unsqueeze(0)
+            binary_t = binary_t.unsqueeze(0)
+            goal_t = goal_t.unsqueeze(0)
+
+            #channel_list.append(cost_t)
+            channel_list.append(occ_t)
+            channel_list.append(binary_t)
+            channel_list.append(goal_t)
+
+            final_tensor = torch.cat(channel_list, dim=0)
+            
+            features[key] = final_tensor
+            
+            channel_list = []
+            channel_list.append(cost_t)
+            
+            targets[key] = channel_list
 
 
-        return x0
+        return features, targets
 
 
 if __name__ == "__main__":
