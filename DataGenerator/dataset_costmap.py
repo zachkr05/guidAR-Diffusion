@@ -6,6 +6,7 @@ import numpy as np
 import torch.nn.functional as F
 from typing import List
 from torch.utils.data.dataset import Dataset
+from typing import List, Dict
 
 class CostmapDataset(Dataset):
 
@@ -20,19 +21,21 @@ class CostmapDataset(Dataset):
         self.n_samples = n_samples
         self.min_num_obstacles = min_num_obstacles #min num of obstacles per class
         self.max_num_obstacles = max_num_obstacles
-        
+        self.obstacle_classes: List[str] = None
     def __len__(self):
         return self.n_samples
 
-    def __getitem__(self, obstacle_classes: List[str]):
+    def __getitem__(self, idx):
         
+        obstacle_classes = self.obstacle_classes
+        assert self.obstacle_classes is not None
+
         obstacles_by_class:Dict[str, List[Dict[str, int]]] = {} # obstacle_class -> List of all obstacle of that type, in that list is a sequence of dictionaries that have position and radius
 
-        size = 0
+        #size = 0
         #Generate obstacles
         for obs in obstacle_classes:
-            obstacles_by_class[obs] = [{'pos': np.random.randint(low=0, high=self.W, size=2, dtype=int), 'rad': np.random.randint(low=1,high=3, size=1, dtype=int)} for _ in range(np.random.randint(low=self.min_num_obstacles,high= self.max_num_obstacles, dtype=int))] 
-            size += len(obstacles_by_class) 
+            obstacles_by_class[obs] = [{'pos': np.random.randint(low=0, high=self.W, size=2, dtype=int), 'rad': int(np.random.randint(low=1,high=3))} for _ in range(np.random.randint(low=self.min_num_obstacles,high= self.max_num_obstacles, dtype=int))] 
 
 
 
@@ -48,61 +51,99 @@ class CostmapDataset(Dataset):
 
         indices_tuple = np.array(np.nonzero(occupancy_map))
         obs_coord = indices_tuple.T
-        distances = np.linalg.norm(obs_coord - self.goal, axis=1)
         
-        while(np.any(distances<4)):
-            self.goal = np.random.randint(size=2, dtype=int)
-        
+        #distances = np.linalg.norm(obs_coord - self.goal, axis=1)
+
+
+        while(True):
+            distances = np.linalg.norm(obs_coord - self.goal, axis=1)
+            if not np.any(distances<4):
+                break
+            self.goal = np.array([
+                np.random.randint(low=0, high = self.H, dtype=np.float32),
+                np.random.randint(low=0, high = self.W, dtype=np.float32),
+                ])
+
+
+
 
         cm = Costmap()
         cm.goal = self.goal
         costmaps, radii_maps, binary_occupancy_map = cm.calculateCost(obstacles_by_class)
         
-        goal_map = np.zeros((self.H, self.W))
-
+        goal_map = np.zeros((self.H, self.W), dtype=np.float32)
+        goal_map[self.goal[0], self.goal[1]] = 1.0
+        goal_t = torch.from_numpy(goal_map).float().unsqueeze(0)
+        
         #Build conditioning vectors
 
         #BINARY occupancy map
         #goal state
         #radius
         
+        #binary_np = np.zeros((self.H, self.W))
+        #occ_np = np.zeros((self.H, self.W))
+        #for key, cm in (costmaps.items()):
+            #    occ_np += radii_maps[key].copy()
+        #    binary_np += binary_occupancy_map[key].copy()
+
+        keys = list(costmaps.keys())
+        keys_to_i = {k: i for i, k in enumerate(keys)}
+
+        bin_stack = torch.stack([torch.from_numpy(binary_occupancy_map[k]).float() for k in keys], dim=0)
+        rad_stack = torch.stack([torch.from_numpy(radii_maps[k]).float() for k in keys], dim=0)
+        
         features = {}
         targets = {}
+
+
         for key, cm in (costmaps.items()):
             channel_list = []
+            i = keys_to_i[key]
+
             
+            curr_bin = bin_stack[i:i+1]
+            curr_rad = rad_stack[i:i+1]
+            
+            other_bin = torch.cat([bin_stack[:i], bin_stack[i+1:]], dim=0) 
+            other_rad = torch.cat([rad_stack[:i], rad_stack[i+1:]], dim=0) 
             cost_np = costmaps[key].copy()
-            occ_np = radii_maps[key].copy()
-            binary_np = binary_occupancy_map[key].copy()
+            #occ_np = radii_maps[key].copy()
+            #binary_np = binary_occupancy_map[key].copy()
             
-            cost_t = torch.from_numpy(cost_np)
-            occ_t = torch.from_numpy(occ_np)
-            binary_t = torch.from_numpy(binary_np)
-            goal_t = torch.from_numpy(goal_map)
+            #cost_t = torch.from_numpy(cost_np)
+            #occ_t = torch.from_numpy(occ_np)
+            #binary_t = torch.from_numpy(binary_np)
+            #goal_t = torch.from_numpy(goal_map)
 
-            cost_t = cost_t.unsqueeze(0)
-            occ_t = occ_t.unsqueeze(0)
-            binary_t = binary_t.unsqueeze(0)
-            goal_t = goal_t.unsqueeze(0)
-
+            #cost_t = cost_t.unsqueeze(0)
+            #occ_t = occ_t.unsqueeze(0)
+            #binary_t = binary_t.unsqueeze(0)
+            #goal_t = goal_t.unsqueeze(0)
+            
             #channel_list.append(cost_t)
-            channel_list.append(occ_t)
-            channel_list.append(binary_t)
-            channel_list.append(goal_t)
+            #channel_list.append(occ_t)
+            #channel_list.append(binary_t)
+            #channel_list.append(goal_t)
+            
+            #final_tensor = torch.cat(channel_li, dim=0)
+            
+            
+            x = torch.cat([curr_bin, curr_rad, other_bin, other_rad, goal_t], dim =0)
+            features[key] = x
+            
+            #channel_list = []
+            #channel_list.append(cost_t)
+            
+            targets[key] = torch.from_numpy(cost_np).float().unsqueeze(0)
 
-            final_tensor = torch.cat(channel_list, dim=0)
-            
-            features[key] = final_tensor
-            
-            channel_list = []
-            channel_list.append(cost_t)
-            
-            targets[key] = channel_list
+
 
 
         return features, targets
 
 
 if __name__ == "__main__":
-   cm_data = CostmapDataset()   
-   cm_data.__getitem__(["chair", "table"]) 
+   cm_data = CostmapDataset() 
+   cm_data.obstacle_classes = ["chair", "table"]
+   cm_data.__getitem__(1) 
