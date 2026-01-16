@@ -1,5 +1,5 @@
 
-from sim import Costmap
+from .sim import Costmap
 import torch
 import torch.nn as nn
 import numpy as np
@@ -60,8 +60,8 @@ class CostmapDataset(Dataset):
             if not np.any(distances<4):
                 break
             self.goal = np.array([
-                np.random.randint(low=0, high = self.H, dtype=np.float32),
-                np.random.randint(low=0, high = self.W, dtype=np.float32),
+                np.random.randint(low=0, high = self.H, dtype=int),
+                np.random.randint(low=0, high = self.W, dtype=int),
                 ])
 
 

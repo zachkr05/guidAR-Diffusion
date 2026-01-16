@@ -1,6 +1,6 @@
 from .sim import (
        Costmap
         )
-from .dataset_costmap import (
+from .dataGenerator import (
         CostmapDataset
         )

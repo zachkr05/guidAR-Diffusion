@@ -62,7 +62,7 @@ class LightweightUNet(nn.Module):
 
     def forward(self, x_t, t, conditioning):
         
-        x=torch.cat([x_t, conditoning], dim=1)
+        x=torch.cat([x_t, conditioning], dim=1)
         t_emb = self.time_mlp(t)
 
         e1 = self.enc1(x, t_emb)

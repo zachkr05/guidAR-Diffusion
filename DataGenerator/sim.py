@@ -1,8 +1,12 @@
 import numpy as np
 import skimage.graph
+import matplotlib
+matplotlib.use("TkAgg")   # or "Qt5Agg"
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+from scipy.ndimage import distance_transform_edt
 class Costmap:
     def __init__(self, H=64, W=64):
         self.H = H
@@ -13,44 +17,34 @@ class Costmap:
         self.robot = [H, W]
         self.goal = [10, 10]
 
-    def calculateCostmaps(self, costmaps, occupancy_map):
-    
+    def calculateCostmaps(self, occupancy_map):
         mcps = {}
-        max_reasonable = (self.H + self.W)  * 2# Max possible path lengthv
+        max_dist = (self.H + self.W) * 2
 
+        combined_mask = np.any(np.stack(list(occupancy_map.values())) > 0, axis=0)
 
-        
-        for key, value in occupancy_map.items():
-            
-            current_cost = costmaps[key].copy().astype(np.float32) +1.0
-       
+        for key in occupancy_map:
+            own_mask = occupancy_map[key] > 0
 
-            mcps[key] = np.zeros((self.H, self.W))
+            # distance to nearest obstacle of THIS class
+            dist = distance_transform_edt(~own_mask)
 
+            dist = np.clip(dist, 0, max_dist)
+            cost01 = 1.0 - (dist / max_dist)          # 1 near this class, 0 far
+            cost = (cost01 * 2.0 - 1.0).astype(np.float32)  # [-1, 1]
 
-            #occupancy_map[i] = 
-            current_cost[occupancy_map[key] > 0] = 1000
+            # "don't generate cost at other obstacles"
+            other_mask = combined_mask & (~own_mask)
+            cost[other_mask] = -1.0   # or 0.0 if you want "no signal"
 
-            mcp = skimage.graph.MCP(current_cost, fully_connected=True)
-            cumulative_costs, _ = mcp.find_costs(starts=[self.goal]) 
-            cumulative_costs[np.isinf(cumulative_costs)] = max_reasonable*2
-
-            cumulative_costs = np.clip(cumulative_costs, 0, max_reasonable * 2)
-            
-            min_val = np.min(cumulative_costs)
-            max_val = np.max(cumulative_costs)
-            
-            denom = max_val -min_val
-            if denom< 1e-5:
-                denom = 1
-
-            norm_dist = (cumulative_costs - min_val) / (denom)
-            
-            mcps[key] = -((1.0 - norm_dist) * 2.0 - 1.0).astype(np.float32)
+            mcps[key] = cost
 
         return mcps
 
+
+
     def calculateCost(self, obstacles_by_class: dict):
+
         """
         """
 
@@ -78,7 +72,7 @@ class Costmap:
                 occupancy_map[key][mask] = 1
                 binary_occupancy_map[key][r,c] = 1 
         
-        final_mcps = self.calculateCostmaps(costmaps, occupancy_map)
+        final_mcps = self.calculateCostmaps(occupancy_map)
         
         #self.visualize_cm(final_mcps, occupancy_map)
 
@@ -112,7 +106,7 @@ class Costmap:
                     r = float(r)
                     c = float(c)
                     radius = obstacle['rad']
-                    radius = float(radius.flatten()[0])
+                    radius = float(radius)
                     
                     # Draw circle for each obstacle
                     circle = patches.Circle((c, r), radius, color=class_color, fill=False, linewidth=2)
@@ -143,12 +137,14 @@ class Costmap:
             plt.xlabel('X')
             plt.ylabel('Y')
             plt.show()
+            plt.savefig(f"costmap_{key}.png")
+            plt.close()
 if __name__ == "__main__":
     cm = Costmap()
 
     data = {
-        'chair': [{'pos': (0, 1), 'rad': 2}, {'pos': (2, 2), 'rad': 2}],
-        'table': [{'pos': (1, 1), 'rad': 2}, {'pos': (0, 1), 'rad': 2}]  # Note: (0, 1) is a duplicate
+        'chair': [{'pos': (0, 20), 'rad': 2}, {'pos': (50, 7), 'rad': 2}],
+        'table': []#{'pos': (15, 12), 'rad': 2}, {'pos': (60, 7), 'rad': 2}]  # Note: (0, 1) is a duplicate
     }
     cm.calculateCost(data)
     #cm.calculateCostMapMulticlassVetorized(data)
