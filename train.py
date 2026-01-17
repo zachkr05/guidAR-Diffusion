@@ -41,7 +41,7 @@ def train():
     lr=1e-4
     checkpoint_dir = "checkpoints"  
     save_every = 1
-    dataset = CostmapDataset(n_samples=20000, H=64, W=64)
+    dataset = CostmapDataset(n_samples=250000, H=64, W=64)
     dataset.obstacle_classes = obstacle_classes
     loader = DataLoader(dataset, batch_size = batch_size, shuffle = True, num_workers =4)
 

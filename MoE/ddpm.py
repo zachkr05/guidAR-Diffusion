@@ -60,7 +60,7 @@ class DDPM:
 
         t_tensor = torch.full((B,), t, device=x_t.device, dtype=torch.long)
 
-        noise_pred = model(x_t, t, conditioning)
+        noise_pred = model(x_t, t_tensor, conditioning)
 
         alpha_t = self.alphas[t]
         alpha_bar_t = self.alpha_bar[t]

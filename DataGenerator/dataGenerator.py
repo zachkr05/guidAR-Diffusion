@@ -137,10 +137,14 @@ class CostmapDataset(Dataset):
             
             targets[key] = torch.from_numpy(cost_np).float().unsqueeze(0)
 
+        positions = {}
+        radii = {}
+        for cls, obstacles in obstacles_by_class.items():
+            positions[cls] = [tuple(obs['pos']) for obs in obstacles]
+            radii[cls] = [obs['rad'] for obs in obstacles]
 
 
-
-        return features, targets
+        return features, targets, positions, radii, self.goal
 
 
 if __name__ == "__main__":
