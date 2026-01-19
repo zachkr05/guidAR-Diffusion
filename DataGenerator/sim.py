@@ -1,7 +1,7 @@
 import numpy as np
 import skimage.graph
 import matplotlib
-matplotlib.use("TkAgg")   # or "Qt5Agg"
+matplotlib.use("MacOSX")   # or "Qt5Agg"
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches

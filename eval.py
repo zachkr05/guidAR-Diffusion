@@ -133,7 +133,7 @@ def interactive_costmap_plot(fused, responsibilities, obstacle_classes, goal):
                 # Update bar chart with responsibilities at this pixel
                 for i, cls in enumerate(obstacle_classes):
                     bars[i].set_height(responsibilities[cls][y, x])
-                responsable_classes = get_responsable_class(responsibilities, y, x) 
+                #responsable_classes = get_responsable_class(responsibilities, y, x) 
                 
                 axes[1].set_title(f"Responsibilities at ({x}, {y})")
                 fig.canvas.draw_idle()
@@ -142,12 +142,11 @@ def interactive_costmap_plot(fused, responsibilities, obstacle_classes, goal):
     plt.tight_layout()
     plt.show()
 
-def get_responsable_classes(responsibilities,y,x):
+#def get_responsable_classes(responsibilities,y,x):
     #1 - responsibility 
     # quantile = np.quantile(scores, 0.9)
 
     #
-
 def evaluate(checkpoint_path, num_samples=4, save_dir="eval_results"):
     
     # Config (must match training)
