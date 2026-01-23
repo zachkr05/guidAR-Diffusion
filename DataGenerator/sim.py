@@ -1,7 +1,7 @@
 import numpy as np
 import skimage.graph
 import matplotlib
-matplotlib.use("MacOSX")   # or "Qt5Agg"
+matplotlib.use("tkAgg")   # or "Qt5Agg"
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -17,6 +17,17 @@ class Costmap:
         self.robot = [H, W]
         self.goal = [10, 10]
 
+
+    @staticmethod
+    def cost_from_mask_gaussian(own_mask, sigma=6.0, other_mask=None):
+        d = distance_transform_edt(~own_mask).astype(np.float32)
+        c01 = np.exp(-(d**2) / (2.0 * sigma**2)).astype(np.float32)  # 1 near, ~0 far
+        cost = (2.0 * c01 - 1.0).astype(np.float32)
+        if other_mask is not None:
+            cost[other_mask] = -1.0
+        return cost
+
+    """
     def calculateCostmaps(self, occupancy_map):
         mcps = {}
         max_dist = (self.H + self.W) * 2
@@ -41,6 +52,26 @@ class Costmap:
 
         return mcps
 
+    """
+
+    def calculateCostmaps(self, occupancy_map, sigma=6.0):
+        mcps = {}
+
+        combined_mask = np.any(np.stack(list(occupancy_map.values())) > 0, axis=0)
+
+        for key in occupancy_map:
+            own_mask = occupancy_map[key] > 0
+            other_mask = combined_mask & (~own_mask)
+
+            cost = Costmap.cost_from_mask_gaussian(
+                own_mask=own_mask,
+                sigma=sigma,
+                other_mask=other_mask
+            )
+
+            mcps[key] = cost
+
+        return mcps
 
 
     def calculateCost(self, obstacles_by_class: dict):

@@ -10,7 +10,7 @@ from typing import List, Dict
 
 class CostmapDataset(Dataset):
 
-    def __init__(self, n_samples = 1000000, H=64, W=64, max_num_obstacles=3, min_total_obstacles=3, min_num_obstacles=2):
+    def __init__(self, n_samples = 1000000, H=64, W=64, max_num_obstacles=3, min_total_obstacles=3, min_num_obstacles=0):
         self.H = H
         self.W = W
         self.cost = np.zeros((H, W), dtype=np.float32)
@@ -35,7 +35,7 @@ class CostmapDataset(Dataset):
         #size = 0
         #Generate obstacles
         for obs in obstacle_classes:
-            obstacles_by_class[obs] = [{'pos': np.random.randint(low=0, high=self.W, size=2, dtype=int), 'rad': int(np.random.randint(low=1,high=3))} for _ in range(np.random.randint(low=self.min_num_obstacles,high= self.max_num_obstacles, dtype=int))] 
+            obstacles_by_class[obs] = [{'pos': np.random.randint(low=10, high=self.W-7, size=2, dtype=int), 'rad': int(np.random.randint(low=1,high=3))} for _ in range(np.random.randint(low=self.min_num_obstacles,high= self.max_num_obstacles, dtype=int))] 
 
 
 
@@ -53,17 +53,17 @@ class CostmapDataset(Dataset):
         obs_coord = indices_tuple.T
         
         #distances = np.linalg.norm(obs_coord - self.goal, axis=1)
-
-
-        while(True):
-            distances = np.linalg.norm(obs_coord - self.goal, axis=1)
-            if not np.any(distances<4):
-                break
-            self.goal = np.array([
-                np.random.randint(low=0, high = self.H, dtype=int),
-                np.random.randint(low=0, high = self.W, dtype=int),
+        self.goal = np.array([
+                np.random.randint(low=self.W-7, high = self.H, dtype=int),
+                np.random.randint(low=self.W-7, high = self.W, dtype=int),
                 ])
 
+
+
+#        while(True):
+#            distances = np.linalg.norm(obs_coord - self.goal, axis=1)
+#            if not np.any(distances<4):
+#                break
 
 
 
