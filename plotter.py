@@ -3,9 +3,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from skimage import graph
-
-
-
 from scipy.interpolate import make_interp_spline
 
 def clamped_bspline_path(path_rows, path_cols, n=200, k=3, tangent_scale=0.0):

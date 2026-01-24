@@ -10,7 +10,7 @@ from typing import List, Dict
 
 class CostmapDataset(Dataset):
 
-    def __init__(self, n_samples = 1000000, H=64, W=64, max_num_obstacles=3, min_total_obstacles=3, min_num_obstacles=0):
+    def __init__(self, n_samples = 1000000, H=128, W=128, max_num_obstacles=3, min_total_obstacles=3, min_num_obstacles=0):
         self.H = H
         self.W = W
         self.cost = np.zeros((H, W), dtype=np.float32)
@@ -22,6 +22,7 @@ class CostmapDataset(Dataset):
         self.min_num_obstacles = min_num_obstacles #min num of obstacles per class
         self.max_num_obstacles = max_num_obstacles
         self.obstacle_classes: List[str] = None
+
     def __len__(self):
         return self.n_samples
 
@@ -32,12 +33,8 @@ class CostmapDataset(Dataset):
 
         obstacles_by_class:Dict[str, List[Dict[str, int]]] = {} # obstacle_class -> List of all obstacle of that type, in that list is a sequence of dictionaries that have position and radius
 
-        #size = 0
-        #Generate obstacles
         for obs in obstacle_classes:
             obstacles_by_class[obs] = [{'pos': np.random.randint(low=10, high=self.W-7, size=2, dtype=int), 'rad': int(np.random.randint(low=1,high=3))} for _ in range(np.random.randint(low=self.min_num_obstacles,high= self.max_num_obstacles, dtype=int))] 
-
-
 
         rows, cols = np.ogrid[:self.H, :self.W]
         occupancy_map = np.zeros((self.H, self.W))
@@ -52,22 +49,12 @@ class CostmapDataset(Dataset):
         indices_tuple = np.array(np.nonzero(occupancy_map))
         obs_coord = indices_tuple.T
         
-        #distances = np.linalg.norm(obs_coord - self.goal, axis=1)
         self.goal = np.array([
                 np.random.randint(low=self.W-7, high = self.H, dtype=int),
                 np.random.randint(low=self.W-7, high = self.W, dtype=int),
                 ])
 
-
-
-#        while(True):
-#            distances = np.linalg.norm(obs_coord - self.goal, axis=1)
-#            if not np.any(distances<4):
-#                break
-
-
-
-        cm = Costmap()
+        cm = Costmap(H=self.H, W=self.W)
         cm.goal = self.goal
         costmaps, radii_maps, binary_occupancy_map = cm.calculateCost(obstacles_by_class)
         
@@ -75,18 +62,6 @@ class CostmapDataset(Dataset):
         goal_map[self.goal[0], self.goal[1]] = 1.0
         goal_t = torch.from_numpy(goal_map).float().unsqueeze(0)
         
-        #Build conditioning vectors
-
-        #BINARY occupancy map
-        #goal state
-        #radius
-        
-        #binary_np = np.zeros((self.H, self.W))
-        #occ_np = np.zeros((self.H, self.W))
-        #for key, cm in (costmaps.items()):
-            #    occ_np += radii_maps[key].copy()
-        #    binary_np += binary_occupancy_map[key].copy()
-
         keys = list(costmaps.keys())
         keys_to_i = {k: i for i, k in enumerate(keys)}
 
@@ -108,32 +83,9 @@ class CostmapDataset(Dataset):
             other_bin = torch.cat([bin_stack[:i], bin_stack[i+1:]], dim=0) 
             other_rad = torch.cat([rad_stack[:i], rad_stack[i+1:]], dim=0) 
             cost_np = costmaps[key].copy()
-            #occ_np = radii_maps[key].copy()
-            #binary_np = binary_occupancy_map[key].copy()
-            
-            #cost_t = torch.from_numpy(cost_np)
-            #occ_t = torch.from_numpy(occ_np)
-            #binary_t = torch.from_numpy(binary_np)
-            #goal_t = torch.from_numpy(goal_map)
-
-            #cost_t = cost_t.unsqueeze(0)
-            #occ_t = occ_t.unsqueeze(0)
-            #binary_t = binary_t.unsqueeze(0)
-            #goal_t = goal_t.unsqueeze(0)
-            
-            #channel_list.append(cost_t)
-            #channel_list.append(occ_t)
-            #channel_list.append(binary_t)
-            #channel_list.append(goal_t)
-            
-            #final_tensor = torch.cat(channel_li, dim=0)
-            
-            
+           
             x = torch.cat([curr_bin, curr_rad, other_bin, other_rad, goal_t], dim =0)
             features[key] = x
-            
-            #channel_list = []
-            #channel_list.append(cost_t)
             
             targets[key] = torch.from_numpy(cost_np).float().unsqueeze(0)
 
@@ -144,7 +96,7 @@ class CostmapDataset(Dataset):
             radii[cls] = [obs['rad'] for obs in obstacles]
 
 
-        return features, targets, positions, radii, self.goal
+        return features, targets #, positions, radii, self.goal
 
 
 if __name__ == "__main__":

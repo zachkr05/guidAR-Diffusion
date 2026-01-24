@@ -36,12 +36,12 @@ def train():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     obstacle_classes = ["chair", "table", "bomb"]
-    batch_size = 32
+    batch_size = 8
     epochs = 100
     lr=1e-4
     checkpoint_dir = "checkpoints"  
     save_every = 1
-    dataset = CostmapDataset(n_samples=250000, H=64, W=64)
+    dataset = CostmapDataset(n_samples=250000, H=128, W=128)
     dataset.obstacle_classes = obstacle_classes
     loader = DataLoader(dataset, batch_size = batch_size, shuffle = True, num_workers =4)
 
@@ -54,6 +54,8 @@ def train():
     optimizer = AdamW(model.parameters(), lr=lr)
 
     ddpm = DDPM(timesteps=1000, device = device)
+
+    os.makedirs(f"{checkpoint_dir}", exist_ok=True)
 
     for epoch in range(epochs):
         model.train()

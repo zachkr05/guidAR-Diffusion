@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 from scipy.ndimage import distance_transform_edt
+
 class Costmap:
     def __init__(self, H=64, W=64):
         self.H = H
@@ -20,45 +21,23 @@ class Costmap:
 
     @staticmethod
     def cost_from_mask_gaussian(own_mask, sigma=6.0, other_mask=None):
+
+        if not np.any(own_mask):
+            cost = np.full(own_mask.shape, -1.0, dtype=np.float32)
+            return cost
+
         d = distance_transform_edt(~own_mask).astype(np.float32)
         c01 = np.exp(-(d**2) / (2.0 * sigma**2)).astype(np.float32)  # 1 near, ~0 far
         cost = (2.0 * c01 - 1.0).astype(np.float32)
-        if other_mask is not None:
-            cost[other_mask] = -1.0
+#        if other_mask is not None:
+ #           cost[other_mask] = -1.0
         return cost
-
-    """
-    def calculateCostmaps(self, occupancy_map):
-        mcps = {}
-        max_dist = (self.H + self.W) * 2
-
-        combined_mask = np.any(np.stack(list(occupancy_map.values())) > 0, axis=0)
-
-        for key in occupancy_map:
-            own_mask = occupancy_map[key] > 0
-
-            # distance to nearest obstacle of THIS class
-            dist = distance_transform_edt(~own_mask)
-
-            dist = np.clip(dist, 0, max_dist)
-            cost01 = 1.0 - (dist / max_dist)          # 1 near this class, 0 far
-            cost = (cost01 * 2.0 - 1.0).astype(np.float32)  # [-1, 1]
-
-            # "don't generate cost at other obstacles"
-            other_mask = combined_mask & (~own_mask)
-            cost[other_mask] = -1.0   # or 0.0 if you want "no signal"
-
-            mcps[key] = cost
-
-        return mcps
-
-    """
 
     def calculateCostmaps(self, occupancy_map, sigma=6.0):
         mcps = {}
 
         combined_mask = np.any(np.stack(list(occupancy_map.values())) > 0, axis=0)
-
+        #print(combined_mask)
         for key in occupancy_map:
             own_mask = occupancy_map[key] > 0
             other_mask = combined_mask & (~own_mask)
@@ -70,7 +49,7 @@ class Costmap:
             )
 
             mcps[key] = cost
-
+        #print(mcps)
         return mcps
 
 
@@ -170,6 +149,7 @@ class Costmap:
             plt.show()
             plt.savefig(f"costmap_{key}.png")
             plt.close()
+
 if __name__ == "__main__":
     cm = Costmap()
 
