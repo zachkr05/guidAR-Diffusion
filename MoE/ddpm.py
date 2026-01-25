@@ -79,6 +79,9 @@ class DDPM:
         else:
             x_prev = mean
 
+
+        x_prev = torch.clamp(x_prev, -1.0,1.0)
+
         return x_prev
 
     def compute_loss(self, model, x_0, conditioning):

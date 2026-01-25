@@ -62,7 +62,7 @@ def clamped_bspline_path(path_rows, path_cols, n=200, k=3, tangent_scale=0.0):
     rows_smooth = spl_r(t_new)
     return rows_smooth, cols_smooth
 
-def user_interactive_plot(fused, responsibilities, obstacle_positions, obstacle_radii, goal):
+def user_interactive_plot(fused, obstacle_positions, obstacle_radii, goal):
 
     fig, axes = plt.subplots(1,4,figsize=(14,6)) #initial costmap with user modifications, deployment of original models on eval scene, finetuned costmap on a completely new scene, difference between original on eval scene and finetuned on eval scene
 

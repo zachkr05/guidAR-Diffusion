@@ -96,7 +96,7 @@ class CostmapDataset(Dataset):
             radii[cls] = [obs['rad'] for obs in obstacles]
 
 
-        return features, targets #, positions, radii, self.goal
+        return features, targets, positions, radii, self.goal
 
 
 if __name__ == "__main__":
