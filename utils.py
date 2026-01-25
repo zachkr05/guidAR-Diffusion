@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 import pickle
 from pathlib import Path
+import torch 
 
 from matplotlib.widgets import RectangleSelector, CheckButtons
 
@@ -221,5 +222,34 @@ def cosine_beta_schedule(timesteps, s=0.008):
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
 
+def responsibilities_from_costmaps(costmaps, alpha=8.0, power=1.0, free_space="uniform"):
+    """
+    costmaps: dict[class_name -> (H,W) cost], each in [-1, 1] (your gaussian outputs)
+    alpha: softmax sharpness (bigger = more decisive)
+    power: optionally sharpen hazard: hazard^power
+    free_space:
+        "uniform" -> if all hazards are 0, return uniform distribution
+        "zeros"   -> if all hazards are 0, return all zeros
+    returns: dict[class_name -> (H,W) responsibility in [0,1], sums to 1 per cell (unless free_space="zeros")
+    """
+    keys = list(costmaps.keys())
+
+    # Stack costmaps: (K,H,W)
+    C = np.stack([costmaps[k].astype(np.float32) for k in keys], axis=0)
+
+    # Hazard signal 
+    if power != 1.0:
+        C = np.sign(C) * (np.abs(C) ** power)
+
+
+    # Softmax over classes (numerically stable)
+    logits = alpha * C
+    logits = logits - np.max(logits, axis=0, keepdims=True)
+    exp_logits = np.exp(logits)
+    denom = np.sum(exp_logits, axis=0, keepdims=True)
+
+    R = exp_logits / denom  # (K,H,W)
+    
+    return {k: R[i] for i, k in enumerate(keys)}
 
 

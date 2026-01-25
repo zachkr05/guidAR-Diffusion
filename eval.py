@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from utils import *
 from plotter import user_interactive_plot 
+from pathlib import Path
 
 import numpy as np
 from scipy.special import logsumexp  # pip install scipy
@@ -46,7 +47,9 @@ def evaluate(checkpoint_path, num_samples=4, save_dir="eval_results"):
 
     #all_generated = []
 
-    features, targets, obstacle_positions, obstacle_radii, goal = dataset[0]
+    #features, targets, obstacle_positions, obstacle_radii, goal = dataset[0]
+    features, targets = dataset[0]
+    goal = dataset.goal
 
     all_generated = {}
     all_targets = {}
@@ -66,7 +69,17 @@ def evaluate(checkpoint_path, num_samples=4, save_dir="eval_results"):
     
     # Fuse costmaps
     print("Fusing costmaps...")
-    fused, responsibilities = fuse_costmaps_softmax_surface(all_generated, obstacle_positions, obstacle_radii, temperature=5)
+    #fused, responsibilities = fuse_costmaps_softmax_surface(all_generated, obstacle_positions, obstacle_radii, temperature=5)
+    # Fuse costmaps (choose a rule)
+    fused = np.maximum.reduce([all_generated[k] for k in obstacle_classes])
+
+    # NEW: responsibilities from cost contributions
+    responsibilities = responsibilities_from_costmaps(
+        all_generated,
+        alpha=10.0,
+        power=2.0,
+        free_space="uniform"
+    )
 
     
     # Interactive plot
@@ -74,8 +87,9 @@ def evaluate(checkpoint_path, num_samples=4, save_dir="eval_results"):
     #interactive_costmap_plot(fused, responsibilities, obstacle_classes, goal)
 
     #New plotting
-    user_interactive_plot(fused, responsibilities, obstacle_positions, obstacle_radii, goal)
-    
+    #user_interactive_plot(fused, responsibilities, obstacle_positions, obstacle_radii, goal)
+    interactive_costmap_plot(fused, responsibilities, obstacle_classes, goal)
+    print("Evaluation complete.")
 
 if __name__ == "__main__":
     import argparse
