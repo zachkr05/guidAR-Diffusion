@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
-
+from utils import *
 # Import local modules
 from DataGenerator.dataGenerator import CostmapDataset
 from MoE.ddpm import DDPM
@@ -22,10 +22,15 @@ def collate_ignore_metadata(batch):
 
     """
 
-    features_list = [item[0] for item in batch]
-    targets_list = [item[1] for item in batch]
+    features = default_collate([item[0] for item in batch])
+    targets = default_collate([item[1] for item in batch])
+    goals = default_collate([item[4] for item in batch])
     
-    return default_collate(features_list), default_collate(targets_list)
+    
+    positions = [item[2] for item in batch]
+    radii = [item[3] for item in batch]
+
+    return features, targets, positions, radii, goals
 
 def evaluate():
     
@@ -61,7 +66,7 @@ def evaluate():
     print("Starting evaluation...")
     with torch.no_grad():
         first_batch= next(iter(loader))
-        features, targets = first_batch[0], first_batch[1]
+        features, targets, positions, radii, goal = first_batch
 
         for cls in obstacle_classes:
             print(f"Sampling for expert: {cls}...")
@@ -76,8 +81,14 @@ def evaluate():
             mse_results[cls].append(loss.item())
             diffused_cm[cls].append(generated)
 
-    print(mse_results)
+    fused_costmap = fuse_costmaps(diffused_cm)
 
+    get_user_adjustments(fused_costmap)
+
+    #retrain()
+
+    #visualize_costmap()
+    
 
 if __name__ == "__main__":
     evaluate() 

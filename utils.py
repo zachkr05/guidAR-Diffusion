@@ -5,209 +5,59 @@ import time
 from pathlib import Path
 import pickle
 from pathlib import Path
-
+import torch
 from matplotlib.widgets import RectangleSelector, CheckButtons
 
 
-def interactive_costmap_plot(
-    fused,
-    responsibilities,
-    obstacle_classes,
-    goal,
-    pkl_path="rect_probs.pkl",
-    label_classes=("chair", "table", "bomb"),  # the tags you want to assign
-):
-    """
-    Hover: shows responsibilities at cursor.
-    Drag rectangle: saves probs for every cell in selected region to pkl.
-    Checkboxes: choose any combo of chair/table/bomb and it will be saved with the region.
-    """
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import numpy as np
 
-    # Left: Fused costmap
-    im = axes[0].imshow(fused, cmap='hot')
-    axes[0].set_title("Fused Costmap (drag rectangle to save; tick labels to tag)")
-    plt.colorbar(im, ax=axes[0])
+def get_user_adjustments(fused_cm):
+    map_np = fused_cm[0,0].detach().cpu().numpy()
 
-    # Plot goal
-    axes[0].plot(goal[1], goal[0], marker='*', color='cyan', markersize=20,
-                 markeredgecolor='black', markeredgewidth=1.5, label='Goal')
-    axes[0].legend(loc='upper right')
 
-    # Right: Responsibilities bar chart
-    n_classes = len(obstacle_classes)
-    bars = axes[1].bar(obstacle_classes, [0] * n_classes)
-    axes[1].set_ylim(0, 1)
-    axes[1].set_ylabel("Responsibility")
-    axes[1].set_title("Responsibilities at cursor position")
+    H, W = map_np.shape
+    x=np.arange(0,W)
+    y=np.arange(0,H)
+    X, Y = np.meshgrid(x,y)
+    Z = map_np
 
-    # Text annotation for hover position
-    pos_text = axes[0].text(
-        0.02, 0.98, "", transform=axes[0].transAxes,
-        va='top', ha='left', color='white',
-        bbox=dict(boxstyle='round', facecolor='black', alpha=0.7)
-    )
+    # 2. Create the 3D Plot
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
 
-    # ---------- Checkbox UI for labels ----------
-    # Create a small axes area for checkboxes (figure coords)
-    cb_ax = fig.add_axes([0.74, 0.05, 0.23, 0.20])  # [left, bottom, width, height]
-    cb_ax.set_title("Labels for next selection")
-    initial = [False] * len(label_classes)
-    check = CheckButtons(cb_ax, list(label_classes), initial)
+    # 3. Plot the surface
+    surf = ax.plot_surface(X, Y, Z, cmap=cm.plasma, linewidth=0, antialiased=False)
 
-    # Store current label selection
-    selected = {name: False for name in label_classes}
+    # 4. Customization
+    ax.set_title("3D Fused Costmap")
+    ax.set_xlabel('X (Width)')
+    ax.set_ylabel('Y (Height)')
+    ax.set_zlabel('Cost Intensity')
 
-    def on_check(label):
-        selected[label] = not selected[label]
-    check.on_clicked(on_check)
+    fig.colorbar(surf, shrink=0.5, aspect=5, label='Cost')
 
-    def current_labels():
-        return [k for k, v in selected.items() if v]
+    ax.view_init(elev=60, azim=35)
 
-    # ---------- PKL logging ----------
-    pkl_path = Path(pkl_path)
-    pkl_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if pkl_path.exists():
-        try:
-            with pkl_path.open("rb") as f:
-                log = pickle.load(f)
-            if not isinstance(log, list):
-                log = []
-        except Exception:
-            log = []
-    else:
-        log = []
-
-    def save_log():
-        tmp = pkl_path.with_suffix(pkl_path.suffix + ".tmp")
-        with tmp.open("wb") as f:
-            pickle.dump(log, f)
-        tmp.replace(pkl_path)
-
-    def clamp(v, lo, hi):
-        return max(lo, min(hi, v))
-
-    # ---------- Hover updates ----------
-    def on_move(event):
-        if event.inaxes != axes[0] or event.xdata is None or event.ydata is None:
-            return
-        x, y = int(event.xdata), int(event.ydata)
-        if not (0 <= x < fused.shape[1] and 0 <= y < fused.shape[0]):
-            return
-
-        pos_text.set_text(f"Position: ({x}, {y})\nCost: {fused[y, x]:.3f}")
-        for i, cls in enumerate(obstacle_classes):
-            bars[i].set_height(float(responsibilities[cls][y, x]))
-        axes[1].set_title(f"Responsibilities at ({x}, {y})")
-        fig.canvas.draw_idle()
-
-    fig.canvas.mpl_connect('motion_notify_event', on_move)
-
-    # ---------- Rectangle selection ----------
-    def on_select(eclick, erelease):
-        if (eclick.xdata is None or eclick.ydata is None or
-            erelease.xdata is None or erelease.ydata is None):
-            return
-
-        # Convert to integer cell coords (inclusive range)
-        x0, y0 = int(np.floor(eclick.xdata)), int(np.floor(eclick.ydata))
-        x1, y1 = int(np.floor(erelease.xdata)), int(np.floor(erelease.ydata))
-
-        xmin, xmax = sorted([x0, x1])
-        ymin, ymax = sorted([y0, y1])
-
-        # Clamp to bounds
-        xmin = clamp(xmin, 0, fused.shape[1] - 1)
-        xmax = clamp(xmax, 0, fused.shape[1] - 1)
-        ymin = clamp(ymin, 0, fused.shape[0] - 1)
-        ymax = clamp(ymax, 0, fused.shape[0] - 1)
-
-        labels = current_labels()
-        t = time.time()
-        n_cells = (xmax - xmin + 1) * (ymax - ymin + 1)
-
-        # Append one record per cell (keeps it simple to train on later)
-        for y in range(ymin, ymax + 1):
-            for x in range(xmin, xmax + 1):
-                probs = {cls: float(responsibilities[cls][y, x]) for cls in obstacle_classes}
-                
-                print(probs)
-                #log.append({
-                #    "timestamp": t,
-                #    "labels": labels,  # <-- your multi-label tag here
-                #    "selection": {"xmin": xmin, "xmax": xmax, "ymin": ymin, "ymax": ymax},
-                #    "x": x,
-                #    "y": y,
-                #    "fused_cost": float(fused[y, x]),
-                #    "probs": probs,
-                #})
-
-        save_log()
-        print(f"[rect] labels={labels} saved x[{xmin},{xmax}] y[{ymin},{ymax}] ({n_cells} cells) -> {pkl_path}")
-
-    rect_selector = RectangleSelector(
-        axes[0], on_select,
-        useblit=True,
-        button=[1],            # left mouse drag
-        interactive=True,
-        spancoords='data'
-    )
-
-    plt.tight_layout()
     plt.show()
 
+def fuse_costmaps(diffused_cm):
 
 
-def plot_baseline(num_samples, obstacle_classes, dataset, ddpm, model):
-    # Generate and visualize
-    for sample_idx in range(num_samples):
-        features, targets = dataset[sample_idx]
-        
-        n_rows = conditioning_channels + 2  # +1 for GT, +1 for generated
-        n_cols = n_classes
-        
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
-        
-        for col, cls in enumerate(obstacle_classes):
-            conditioning = features[cls].unsqueeze(0).to(device)
-            gt_costmap = targets[cls].squeeze().numpy()
-            
-            # Generate costmap
-            shape = (1, 1, 64, 64)
-            generated = ddpm.sample(model.experts[cls], conditioning, shape)
-            generated = generated.squeeze().cpu().numpy()
-            
-            # Plot each conditioning channel (rows 0 to conditioning_channels-1)
-            for ch in range(conditioning_channels):
-                axes[ch, col].imshow(features[cls][ch].numpy(), cmap='gray')
-                if col == 0:
-                    axes[ch, col].set_ylabel(channel_names[ch] if ch < len(channel_names) else f"ch_{ch}")
-                if ch == 0:
-                    axes[ch, col].set_title(cls)
-                axes[ch, col].axis('off')
-            
-            # Plot ground truth (second to last row)
-            axes[-2, col].imshow(gt_costmap, cmap='hot')
-            if col == 0:
-                axes[-2, col].set_ylabel("Ground Truth")
-            axes[-2, col].axis('off')
-            
-            # Plot generated (last row)
-            axes[-1, col].imshow(generated, cmap='hot')
-            if col == 0:
-                axes[-1, col].set_ylabel("Generated")
-            axes[-1, col].axis('off')
-            
-#            all_generated[cls] = generated    
-        
-        plt.tight_layout()
-        plt.savefig(f"{save_dir}/sample_{sample_idx}.png")
-        plt.close()
-        print(f"Saved sample_{sample_idx}.png")
+    """
+        IMPORTANT, this only works for 1 CM see line for diffused_stacked
+    """
+    # stack all the tensor vals
 
 
+    #TODO: fix for multiple CM
+    diffused_stacked = torch.stack([v[0].squeeze(1) for v in diffused_cm.values()], dim=1)
+
+    combined_map = torch.logsumexp(diffused_stacked, dim=1)
+        
+    #Restore to usual tensor
+    return combined_map.unsqueeze(1)
 
 def cosine_beta_schedule(timesteps, s=0.008):
     """
