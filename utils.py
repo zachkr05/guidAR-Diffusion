@@ -7,13 +7,58 @@ import pickle
 from pathlib import Path
 import torch
 from matplotlib.widgets import RectangleSelector, CheckButtons
-
-
-import matplotlib.pyplot as plt
 from matplotlib import cm
 import numpy as np
+from skimage.graph import route_through_array
+from scipy.interpolate import BSpline
 
-def get_user_adjustments(fused_cm):
+def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position):
+
+    map_np = fused_costmap[0,0].detach().cpu().numpy()
+
+
+    max_val = np.max(map_np)
+    min_val = np.min(map_np)
+
+    map_np = ((map_np-min_val)/(max_val - min_val) +1e-8)
+    #map_np[map_np > 0.8] = np.inf
+    #https://stackoverflow.com/questions/32551536/draw-marker-in-image
+    #plt.annotate('25, 50', xy=(25, 50))
+    #print(obstacle_positions)
+    
+    colors = {'chair': 'green', 'table': 'red', 'bomb': 'blue'}
+
+    #Tech debt but obstacle positions is a list of dictionaries
+    for cls, obs_list in obstacle_positions[0].items():
+        for pos in obs_list:
+            plt.plot(pos[1],pos[0], color=colors[cls], marker='o', label=f'{cls}')
+    goal = goal_position[0]
+
+    plt.plot(goal[1], goal[0], color='olive', marker='*', label='goal')
+
+    path = route_through_array(map_np, [0,0], (goal[1],goal[0]), fully_connected=True)
+
+    #print(path) 
+    path_array = np.array(path[0])
+    x_np = path_array[:, 1]
+    y_np = path_array[:, 0]
+
+    ####
+    #plot for showing the path 
+    #####
+    
+    #plt.plot(x_np, y_np.T, marker='>', label="path")
+
+    k = 3
+
+    
+
+    plt.imshow(map_np, origin='lower')
+    plt.colorbar()
+    plt.legend(loc='best')
+    plt.show()
+
+def visualize_3d(fused_cm):
     map_np = fused_cm[0,0].detach().cpu().numpy()
 
 
@@ -50,11 +95,11 @@ def fuse_costmaps(diffused_cm):
     """
     # stack all the tensor vals
 
-
+    
     #TODO: fix for multiple CM
     diffused_stacked = torch.stack([v[0].squeeze(1) for v in diffused_cm.values()], dim=1)
 
-    combined_map = torch.logsumexp(diffused_stacked, dim=1)
+    combined_map = torch.logsumexp(diffused_stacked, dim=1)# - np.exp(-1)
         
     #Restore to usual tensor
     return combined_map.unsqueeze(1)

@@ -83,7 +83,7 @@ def evaluate():
 
     fused_costmap = fuse_costmaps(diffused_cm)
 
-    get_user_adjustments(fused_costmap)
+    get_user_adjustments(fused_costmap, positions, radii, goal)
 
     #retrain()
 
