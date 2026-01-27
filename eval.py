@@ -63,6 +63,8 @@ def evaluate():
     mse_results = {cls: [] for cls in obstacle_classes}
     diffused_cm = {cls: [] for cls in obstacle_classes}
 
+    first_batch = None
+
     print("Starting evaluation...")
     with torch.no_grad():
         first_batch= next(iter(loader))
@@ -83,9 +85,9 @@ def evaluate():
 
     fused_costmap = fuse_costmaps(diffused_cm)
 
-    get_user_adjustments(fused_costmap, positions, radii, goal)
-
-    #retrain()
+    orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
+    #print("original path: ", orig_path)
+    finetune_models(model, first_batch, orig_path, user_path)
 
     #visualize_costmap()
     

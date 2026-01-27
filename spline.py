@@ -141,12 +141,19 @@ class DraggableBSpline:
         self.cid_press   = ax.figure.canvas.mpl_connect("button_press_event", self.on_press)
         self.cid_release = ax.figure.canvas.mpl_connect("button_release_event", self.on_release)
         self.cid_move    = ax.figure.canvas.mpl_connect("motion_notify_event", self.on_move)
+    
 
+        self.x = None
+        self.y = None
+        
     def _update_curve(self):
         splx = BSpline(self.U, self.P[:, 0], self.k)
         sply = BSpline(self.U, self.P[:, 1], self.k)
         x_s = splx(self.t)
         y_s = sply(self.t)
+
+        self.x = x_s
+        self.y = y_s
 
         self.curve_line.set_data(x_s, y_s)
         self.poly_line.set_data(self.P[:, 0], self.P[:, 1])

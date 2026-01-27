@@ -59,6 +59,12 @@ def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position
     #plt.colorbar()
     ax.legend(loc='best')
     plt.show()
+    print("finished")
+    
+    orig_path = np.column_stack([x_np, y_np])
+    user_path = np.column_stack([dragger.x, dragger.y])
+
+    return orig_path, user_path
 
 def visualize_3d(fused_cm):
     map_np = fused_cm[0,0].detach().cpu().numpy()
