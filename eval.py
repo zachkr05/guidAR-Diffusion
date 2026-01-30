@@ -185,8 +185,11 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
         x_0 = targets[target_class].to(device)
         costmap_dict = {}
 
-        generated = ddpm.sample(expert_model, conditioning, x_0.shape)
-
+        generated, log_prob = ddpm.sample_with_logprob(
+                    expert_model, 
+                    conditioning, 
+                    shape=x_0.shape
+                )
         for cls in model.obstacle_classes:
             if cls == target_class:
                 costmap_dict[cls] = [generated]
@@ -219,10 +222,16 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
                 wL = wL
                 )
 
-            cost_tensor = torch.tensor(traj_cost, device = device, requires_grad=True)
+            cost_tensor = torch.tensor(traj_cost, device = device, dtype=torch.float32)
 
-            cost_tensor.backward()
+            reinforce_loss = (log_prob * cost_tensor).mean() 
+
+
+
+            reinforce_loss.backward()
             optimizer.step()
+            #cost_tensor.backward()
+            #optimizer.step()
 
             loss_history.append(traj_cost)
 
