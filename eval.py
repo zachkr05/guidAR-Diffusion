@@ -98,10 +98,10 @@ def length_ratio_penalty(P: np.ndarray, U: np.ndarray, eps: float = 1e-9) -> flo
 
 def trajectory_cost(orig_path: np.ndarray,
                     user_path: np.ndarray,
-                    wH: float = 0.3,
+                    wH: float = 1,
                     wF: float = 0.3,
                     wK: float = 0.01,
-                    wL: float = 10.0,
+                    wL: float = 0.0,
                     scales: dict | None = None) -> dict:
     """
     Returns a dict with components + total cost.
@@ -112,8 +112,8 @@ def trajectory_cost(orig_path: np.ndarray,
     # assumes you already defined:
     # hausdorff_distance(A,B) and discrete_frechet_distance(A,B)
     H = hausdorff_distance(orig_path, user_path)
-    F = discrete_frechet_distance(orig_path, user_path)
-    #F = 2
+    #F = discrete_frechet_distance(orig_path, user_path)
+    F = 0
     K = curvature_penalty(orig_path)
     L = length_ratio_penalty(orig_path, user_path)
     
@@ -194,9 +194,13 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
             lr = lr
             )
 
-    ddpm = DDPM(timesteps=100, device = device)
+    ddpm = DDPM(timesteps=1000, device = device)
 
     loss_history = []
+
+
+    avg_cost = None
+    alpha_baseline = 0.9
 
     for epoch in tqdm(range(epochs), desc = "IRL Finetuning"):
 
@@ -207,11 +211,13 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
         x_0 = targets[target_class].to(device)
         costmap_dict = {}
 
+
+
         generated, log_prob = ddpm.sample_with_partial_logprob(
                     expert_model, 
                     conditioning, 
                     shape=x_0.shape,
-                    logprob_steps=5
+                    logprob_steps=50
                 )
         for cls in model.obstacle_classes:
             if cls == target_class:
@@ -245,7 +251,15 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
                 wL = wL
                 )
 
-            cost_tensor = torch.tensor(traj_cost, device = device, dtype=torch.float32)
+            if avg_cost is None:
+                avg_cost = traj_cost
+            else:
+                avg_cost = alpha_baseline * avg_cost + (1-alpha_baseline)*traj_cost
+
+            advantage = traj_cost - avg_cost
+
+
+            cost_tensor = torch.tensor(advantage, device = device, dtype=torch.float32)
 
             reinforce_loss = (log_prob * cost_tensor).mean() 
 
@@ -341,7 +355,7 @@ def evaluate():
     #print(diffused_cm)
     orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
     #print("original path: ", orig_path)
-    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-5, epochs=50, target_class="chair", wH=0.3, wF = 0.3, wK = 0.01, wL=50.0)
+    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-6, epochs=100, target_class="chair", wH=0.3, wF = 0, wK = 0.01, wL=0.0)
 
     #visualize_costmap()
     

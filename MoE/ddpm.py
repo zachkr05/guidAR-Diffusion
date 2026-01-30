@@ -75,8 +75,10 @@ class DDPM:
             x_prev_unclamped = mean + sigma * noise
             
             if return_logprob:
+                x_action = x_prev_unclamped.detach()
+
                 log_2pi = math.log(2.0 * math.pi)
-                log_prob_elem = -0.5 * ((x_prev_unclamped - mean) / sigma) ** 2 \
+                log_prob_elem = -0.5 * ((x_action - mean) / sigma) ** 2 \
                                 - torch.log(sigma) - 0.5 * log_2pi
                 log_prob = log_prob_elem.flatten(1).sum(dim=1)  # (B,)
             
