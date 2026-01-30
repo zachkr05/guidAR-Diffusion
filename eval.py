@@ -357,8 +357,73 @@ def evaluate():
     #print("original path: ", orig_path)
     finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-3, epochs=100, target_class="chair", wH=0.3, wF = 0, wK = 0.01, wL=0.0)
 
+
+    original_image_tensor = diffused_cm[target_cls][0]
+    
+    visualize_improvement(
+        model=model,
+        target_class=target_cls,
+        features=features,
+        device=device,
+        original_generated=original_image_tensor
+    )
     #visualize_costmap()
     
+def visualize_improvement(model, target_class, features, device, original_generated):
+    """
+    Generates a new sample from the fine-tuned model, subtracts the old sample,
+    and displays the delta.
+    """
+    print(f"\nGenering 'After' image for {target_class}...")
+    
+    # 1. Setup Model and Sampling
+    expert_model = model.experts[target_class]
+    expert_model.eval() # Ensure we are in eval mode for sampling
+    ddpm = DDPM(timesteps=1000, device=device)
+    
+    cond = features[target_class].to(device)
+    # We use the shape from the original generation to match dimensions
+    shape = original_generated.shape 
+
+    # 2. Generate "After" Image
+    with torch.no_grad():
+        new_generated = ddpm.sample(expert_model, cond, shape=shape)
+
+    # 3. Convert to Numpy for Plotting
+    # Squeeze to remove Batch and Channel dims -> (H, W)
+    img_old = original_generated[0, 0].cpu().numpy()
+    img_new = new_generated[0, 0].cpu().numpy()
+    
+    # Calculate Delta
+    delta = img_new - img_old
+
+    # 4. Visualization
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # Plot: Before
+    im1 = axes[0].imshow(img_old, cmap='viridis', origin='lower')
+    axes[0].set_title(f"Before Fine-tuning ({target_class})")
+    plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
+
+    # Plot: After
+    im2 = axes[1].imshow(img_new, cmap='viridis', origin='lower')
+    axes[1].set_title(f"After Fine-tuning ({target_class})")
+    plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
+
+    # Plot: Delta (Difference)
+    # Use 'seismic' or 'bwr' (Blue-White-Red) to show negative vs positive change
+    # Center the colormap at 0 using vmin/vmax
+    max_val = max(abs(np.min(delta)), abs(np.max(delta)))
+    im3 = axes[2].imshow(delta, cmap='seismic', origin='lower', vmin=-max_val, vmax=max_val)
+    axes[2].set_title("Delta (New - Old)\nRed = Cost Increased | Blue = Cost Decreased")
+    plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.show()
+    
+    # Optional: Save it
+    plt.savefig(f"delta_improvement_{target_class}.png")
+    print(f"Visualization saved to delta_improvement_{target_class}.png")
 
 if __name__ == "__main__":
     evaluate() 
