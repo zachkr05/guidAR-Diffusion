@@ -12,7 +12,7 @@ from DataGenerator.dataGenerator import CostmapDataset
 from MoE.ddpm import DDPM
 from train import ExpertEnsemble
 from torch.utils.data.dataloader import default_collate
-
+from planner import SoftGridPlanner
 import os
 
 import torch
@@ -28,159 +28,32 @@ from MoE.UNet import LightweightUNet
 from MoE.ddpm import DDPM
 
 
-
-
-def compute_path_from_costmap(costmap_dict, goal, device="cuda"):
-    fused_map = fuse_costmaps(costmap_dict)
-    
-    if isinstance(fused_map, torch.Tensor):
-        fused_map = fused_map.cpu().detach().numpy()
-    
-    # ✅ DEBUG: Print shapes and values
-    print(f"Fused map shape: {fused_map.shape}")
-    print(f"Goal value: {goal}")
-    print(f"Goal type: {type(goal)}")
-    
-    # Check if fused_map is correct shape
-    if len(fused_map.shape) == 4:  # (B, C, H, W)
-        fused_map = fused_map[0, 0]  # Extract first batch/channel
-        print(f"Extracted to shape: {fused_map.shape}")
-    elif len(fused_map.shape) == 3:  # (C, H, W) or (B, H, W)
-        fused_map = fused_map[0]
-        print(f"Extracted to shape: {fused_map.shape}")
-
-
-    fused_map.squeeze()
-
-    H, W = fused_map.shape
-    print(f"H={H}, W={W}")
-    print(f"Start: [0, 0], Goal: ({goal[0]}, {goal[1]})")
-    
-    # ✅ Ensure goal is within bounds
-    goal_y = int(np.clip(goal[0], 0, H - 1))
-    goal_x = int(np.clip(goal[1], 0, W - 1))
-    
-    print(f"Clipped goal: ({goal_y}, {goal_x})")
-    
-    path = route_through_array(fused_map, [0, 0], [goal_y, goal_x], fully_connected=True)
-    
-    if path[0] is None:
-        raise ValueError("No valid path found through costmap")
-    
-    path_array = np.array(path[0])
-    x_np = path_array[:, 1]
-    y_np = path_array[:, 0]
-    
-    return np.column_stack([x_np, y_np])
-
-def path_length(P: np.ndarray) -> float:
-    d = np.diff(P, axis=0)
-    return float(np.sum(np.linalg.norm(d, axis=1)))
-
-def curvature_penalty(P: np.ndarray) -> float:
+def make_expert_target(user_path, H, W, device):
     """
-    Stable smoothness/curvature proxy using second differences.
-    Lower is smoother.
+    Converts a user path (N, 2) [x, y] into a soft target image (1, 1, H, W).
     """
-    if len(P) < 3:
-        return 0.0
-    d2 = P[2:] - 2*P[1:-1] + P[:-2]              # (N-2,2)
-    return float(np.sum(np.einsum("ij,ij->i", d2, d2)))  # sum ||d2||^2
-
-def length_ratio_penalty(P: np.ndarray, U: np.ndarray, eps: float = 1e-9) -> float:
-    """
-    Symmetric, well-conditioned penalty on length mismatch:
-      (log(Lp/Lu))^2
-    """
-    Lp = path_length(P)
-    Lu = path_length(U)
-    return float(np.log((Lp + eps) / (Lu + eps))**2)
-
-def trajectory_cost(orig_path: np.ndarray,
-                    user_path: np.ndarray,
-                    wH: float = 1,
-                    wF: float = 0.3,
-                    wK: float = 0.01,
-                    wL: float = 0.0,
-                    scales: dict | None = None) -> dict:
-    """
-    Returns a dict with components + total cost.
-
-    scales (optional): {"H": sH, "F": sF, "K": sK} to normalize magnitudes.
-    Example: scales={"H": 1.0, "F": 1.0, "K": 100.0}
-    """
-    # assumes you already defined:
-    # hausdorff_distance(A,B) and discrete_frechet_distance(A,B)
-    H = hausdorff_distance(orig_path, user_path)
-    #F = discrete_frechet_distance(orig_path, user_path)
-    F = 0
-    K = curvature_penalty(orig_path)
-    L = length_ratio_penalty(orig_path, user_path)
+    target = torch.zeros((1, 1, H, W), device=device)
     
-    
-
-    if scales is None:
-        sH = sF = 1.0
-        sK = 1.0
+    # user_path comes in as (N, 2) numpy array
+    if isinstance(user_path, np.ndarray):
+        path_tensor = torch.from_numpy(user_path).float().to(device)
     else:
-        sH = float(scales.get("H", 1.0))
-        sF = float(scales.get("F", 1.0))
-        sK = float(scales.get("K", 1.0))
+        path_tensor = user_path
 
-    total = wH * (H / sH) + wF * (F / sF) + wK * (K / sK) + wL * L
-
-    return total
-
-def pairwise_dist(A: np.ndarray, B: np.ndarray) -> np.ndarray:
-    """
-    Returns NxM matrix of Euclidean distances between points in A and B.
-    A: (N,2), B: (M,2)
-    """
-    # Broadcasting: (N,1,2) - (1,M,2) -> (N,M,2) -> norm -> (N,M)
-    return np.linalg.norm(A[:, None, :] - B[None, :, :], axis=2)
-
-def hausdorff_distance(A: np.ndarray, B: np.ndarray) -> float:
-    """
-    Symmetric (undirected) discrete Hausdorff distance between two point sequences.
-    """
-    D = pairwise_dist(A, B)
-    # directed: max_i min_j d(a_i, b_j)
-    h_AB = np.max(np.min(D, axis=1))
-    h_BA = np.max(np.min(D, axis=0))
-    return float(max(h_AB, h_BA))
-
-def discrete_frechet_distance(A: np.ndarray, B: np.ndarray) -> float:
-    """
-    Discrete Fréchet distance between two point sequences (Eiter & Mannila DP).
-    Iterative version to avoid recursion depth issues.
-    """
-    D = pairwise_dist(A, B)  # (N, M)
-    N, M = D.shape
+    # Extract coordinates. Assuming user_path is [x, y] (col, row)
+    # We clip to ensure we don't crash if the path touches the edge
+    xs = path_tensor[:, 0].long().clamp(0, W-1)
+    ys = path_tensor[:, 1].long().clamp(0, H-1)
     
-    # ✅ Use iterative DP instead of recursion
-    ca = np.full((N, M), np.inf, dtype=float)
+    # "Draw" the path onto the grid
+    target[0, 0, ys, xs] = 1.0
     
-    # Base case
-    ca[0, 0] = D[0, 0]
+    # Smooth the target slightly (Blur) so the loss isn't too harsh
+    # This helps the optimizer "find" the path if the prediction is slightly off
+    target = F.avg_pool2d(target, kernel_size=3, stride=1, padding=1)
+    target = target / (target.sum() + 1e-8) # Normalize to sum to 1
     
-    # Fill first column
-    for i in range(1, N):
-        ca[i, 0] = max(ca[i - 1, 0], D[i, 0])
-    
-    # Fill first row
-    for j in range(1, M):
-        ca[0, j] = max(ca[0, j - 1], D[0, j])
-    
-    # Fill rest of the table
-    for i in range(1, N):
-        for j in range(1, M):
-            ca[i, j] = max(
-                min(ca[i - 1, j], ca[i - 1, j - 1], ca[i, j - 1]),
-                D[i, j]
-            )
-    
-    return float(ca[N - 1, M - 1])
-
+    return target
 
 def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL,epochs):
    
@@ -193,14 +66,17 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
             [p for p in expert_model.parameters() if p.requires_grad],
             lr = lr
             )
-
+    planner = SoftGridPlanner(iters=80, tau=1.0, step_cost=0.05).to(device)
+    
+    H, W = 128, 128
+    target_visitation = make_expert_target(user_path, H, W, device)
     ddpm = DDPM(timesteps=1000, device = device)
 
     loss_history = []
 
 
-    avg_cost = None
-    alpha_baseline = 0.9
+#    avg_cost = None
+#    alpha_baseline = 0.9
 
     for epoch in tqdm(range(epochs), desc = "IRL Finetuning"):
 
@@ -209,22 +85,53 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
 
         conditioning = features[target_class].to(device)
         x_0 = targets[target_class].to(device)
-        costmap_dict = {}
 
+        B = x_0.shape[0]
+        t = torch.randint(0, ddpm.timesteps, (B,), device=device).long()
 
+        x_t, noise = ddpm.q_sample(x_0,t)
 
-        generated, log_prob = ddpm.sample_with_partial_logprob(
-                    expert_model, 
-                    conditioning, 
-                    shape=x_0.shape,
-                    logprob_steps=50
-                )
+        noise_pred = expert_model(x_t, t, conditioning)
+
+        x_0_pred_target = ddpm.predict_start_from_noise(x_t, t, noise_pred)
+        #costmap_dict = {}
+
+        #generated, log_prob = ddpm.sample_with_partial_logprob(
+        #            expert_model, 
+        #            conditioning, 
+        #            shape=x_0.shape,
+        #            logprob_steps=50
+        #        )
+        
+        maps_to_fuse = []
         for cls in model.obstacle_classes:
             if cls == target_class:
-                costmap_dict[cls] = [generated]
+                maps_to_fuse.append(x_0_pred_target)
             else:
-                costmap_dict[cls] = [targets[cls].to(device)]
+                maps_to_fuse.append(targets[cls].to(device).detach())
+       
+        stack_maps = torch.stack(maps_to_fuse, dim=1)
+        fused_map_raw = torch.logsumexp(stack_maps, dim=1)
 
+        # 6. Planner Loss
+        cost_map_fused = F.softplus(fused_map_raw) + 0.1
+        pred_visitation = planner(cost_map_fused, goal.to(device))
+        
+        loss_plan = -(target_visitation * torch.log(pred_visitation + 1e-8)).sum()
+        loss_diff = F.mse_loss(noise_pred, noise)
+
+        total_loss = loss_diff + (2.0 * loss_plan)
+
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(expert_model.parameters(), 1.0)
+        optimizer.step()
+        loss_history.append(total_loss.item())
+    print(loss_history)
+    expert_model.set_finetune(active=False)
+    return loss_history
+        
+
+    """
         try:
             generated_path = compute_path_from_costmap(costmap_dict, goal[0].cpu().numpy(), device)
 
@@ -278,7 +185,7 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
         except (ValueError, RuntimeError) as e:
                     print(f"\nWarning: Could not compute path at epoch {epoch + 1}: {e}")
                     continue 
-    
+    """
     expert_model.set_finetune(active=False)
 
     return loss_history
@@ -355,7 +262,7 @@ def evaluate():
     #print(diffused_cm)
     orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
     #print("original path: ", orig_path)
-    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-3, epochs=10, target_class="chair", wH=1, wF = 0, wK = 0.01, wL=0.0)
+    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-3, epochs=100, target_class="chair", wH=1, wF = 0, wK = 0.01, wL=0.0)
 
 
     original_image_tensor = diffused_cm["chair"][0]

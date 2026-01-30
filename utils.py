@@ -14,6 +14,159 @@ from scipy.interpolate import BSpline
 from spline import *
 
 
+def compute_path_from_costmap(costmap_dict, goal, device="cuda"):
+    fused_map = fuse_costmaps(costmap_dict)
+    
+    if isinstance(fused_map, torch.Tensor):
+        fused_map = fused_map.cpu().detach().numpy()
+    
+    # ✅ DEBUG: Print shapes and values
+    print(f"Fused map shape: {fused_map.shape}")
+    print(f"Goal value: {goal}")
+    print(f"Goal type: {type(goal)}")
+    
+    # Check if fused_map is correct shape
+    if len(fused_map.shape) == 4:  # (B, C, H, W)
+        fused_map = fused_map[0, 0]  # Extract first batch/channel
+        print(f"Extracted to shape: {fused_map.shape}")
+    elif len(fused_map.shape) == 3:  # (C, H, W) or (B, H, W)
+        fused_map = fused_map[0]
+        print(f"Extracted to shape: {fused_map.shape}")
+
+
+    fused_map.squeeze()
+
+    H, W = fused_map.shape
+    print(f"H={H}, W={W}")
+    print(f"Start: [0, 0], Goal: ({goal[0]}, {goal[1]})")
+    
+    # ✅ Ensure goal is within bounds
+    goal_y = int(np.clip(goal[0], 0, H - 1))
+    goal_x = int(np.clip(goal[1], 0, W - 1))
+    
+    print(f"Clipped goal: ({goal_y}, {goal_x})")
+    
+    path = route_through_array(fused_map, [0, 0], [goal_y, goal_x], fully_connected=True)
+    
+    if path[0] is None:
+        raise ValueError("No valid path found through costmap")
+    
+    path_array = np.array(path[0])
+    x_np = path_array[:, 1]
+    y_np = path_array[:, 0]
+    
+    return np.column_stack([x_np, y_np])
+
+def path_length(P: np.ndarray) -> float:
+    d = np.diff(P, axis=0)
+    return float(np.sum(np.linalg.norm(d, axis=1)))
+
+def curvature_penalty(P: np.ndarray) -> float:
+    """
+    Stable smoothness/curvature proxy using second differences.
+    Lower is smoother.
+    """
+    if len(P) < 3:
+        return 0.0
+    d2 = P[2:] - 2*P[1:-1] + P[:-2]              # (N-2,2)
+    return float(np.sum(np.einsum("ij,ij->i", d2, d2)))  # sum ||d2||^2
+
+def length_ratio_penalty(P: np.ndarray, U: np.ndarray, eps: float = 1e-9) -> float:
+    """
+    Symmetric, well-conditioned penalty on length mismatch:
+      (log(Lp/Lu))^2
+    """
+    Lp = path_length(P)
+    Lu = path_length(U)
+    return float(np.log((Lp + eps) / (Lu + eps))**2)
+
+def trajectory_cost(orig_path: np.ndarray,
+                    user_path: np.ndarray,
+                    wH: float = 1,
+                    wF: float = 0.3,
+                    wK: float = 0.01,
+                    wL: float = 0.0,
+                    scales: dict | None = None) -> dict:
+    """
+    Returns a dict with components + total cost.
+
+    scales (optional): {"H": sH, "F": sF, "K": sK} to normalize magnitudes.
+    Example: scales={"H": 1.0, "F": 1.0, "K": 100.0}
+    """
+    # assumes you already defined:
+    # hausdorff_distance(A,B) and discrete_frechet_distance(A,B)
+    H = hausdorff_distance(orig_path, user_path)
+    #F = discrete_frechet_distance(orig_path, user_path)
+    F = 0
+    K = curvature_penalty(orig_path)
+    L = length_ratio_penalty(orig_path, user_path)
+    
+    
+
+    if scales is None:
+        sH = sF = 1.0
+        sK = 1.0
+    else:
+        sH = float(scales.get("H", 1.0))
+        sF = float(scales.get("F", 1.0))
+        sK = float(scales.get("K", 1.0))
+
+    total = wH * (H / sH) + wF * (F / sF) + wK * (K / sK) + wL * L
+
+    return total
+
+def pairwise_dist(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """
+    Returns NxM matrix of Euclidean distances between points in A and B.
+    A: (N,2), B: (M,2)
+    """
+    # Broadcasting: (N,1,2) - (1,M,2) -> (N,M,2) -> norm -> (N,M)
+    return np.linalg.norm(A[:, None, :] - B[None, :, :], axis=2)
+
+def hausdorff_distance(A: np.ndarray, B: np.ndarray) -> float:
+    """
+    Symmetric (undirected) discrete Hausdorff distance between two point sequences.
+    """
+    D = pairwise_dist(A, B)
+    # directed: max_i min_j d(a_i, b_j)
+    h_AB = np.max(np.min(D, axis=1))
+    h_BA = np.max(np.min(D, axis=0))
+    return float(max(h_AB, h_BA))
+
+def discrete_frechet_distance(A: np.ndarray, B: np.ndarray) -> float:
+    """
+    Discrete Fréchet distance between two point sequences (Eiter & Mannila DP).
+    Iterative version to avoid recursion depth issues.
+    """
+    D = pairwise_dist(A, B)  # (N, M)
+    N, M = D.shape
+    
+    # ✅ Use iterative DP instead of recursion
+    ca = np.full((N, M), np.inf, dtype=float)
+    
+    # Base case
+    ca[0, 0] = D[0, 0]
+    
+    # Fill first column
+    for i in range(1, N):
+        ca[i, 0] = max(ca[i - 1, 0], D[i, 0])
+    
+    # Fill first row
+    for j in range(1, M):
+        ca[0, j] = max(ca[0, j - 1], D[0, j])
+    
+    # Fill rest of the table
+    for i in range(1, N):
+        for j in range(1, M):
+            ca[i, j] = max(
+                min(ca[i - 1, j], ca[i - 1, j - 1], ca[i, j - 1]),
+                D[i, j]
+            )
+    
+    return float(ca[N - 1, M - 1])
+
+
+
 def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position):
 
     map_np = fused_costmap[0,0].detach().cpu().numpy()

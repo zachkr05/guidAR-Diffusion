@@ -26,6 +26,15 @@ class DDPM:
         self.sqrt_one_minus_alpha_bar = torch.sqrt(1.0 - self.alpha_bar) 
 
 
+    def predict_start_from_noise(self, x_t, t, noise):
+        """
+        Reconstructs x_0 from x_t and the predicted noise.
+        """
+        sqrt_alpha_bar = self.sqrt_alpha_bar[t].view(-1, 1, 1, 1)
+        sqrt_one_minus_alpha_bar = self.sqrt_one_minus_alpha_bar[t].view(-1, 1, 1, 1)
+        
+        return (x_t - sqrt_one_minus_alpha_bar * noise) / sqrt_alpha_bar
+    
     def q_sample(self, x_0, t, noise=None):
         """
             Forward diffusion process
