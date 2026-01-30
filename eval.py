@@ -172,7 +172,7 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
             lr = lr
             )
 
-    ddpm = DDPM(timesteps=1000, device = device)
+    ddpm = DDPM(timesteps=100, device = device)
 
     loss_history = []
 
@@ -185,10 +185,11 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
         x_0 = targets[target_class].to(device)
         costmap_dict = {}
 
-        generated, log_prob = ddpm.sample_with_logprob(
+        generated, log_prob = ddpm.sample_with_partial_logprob(
                     expert_model, 
                     conditioning, 
-                    shape=x_0.shape
+                    shape=x_0.shape,
+                    logprob_steps=5
                 )
         for cls in model.obstacle_classes:
             if cls == target_class:

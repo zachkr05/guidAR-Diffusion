@@ -122,3 +122,24 @@ class DDPM:
             total_logprob += lp
         
         return x_t, total_logprob
+
+
+
+
+    # Add to MoE/ddpm.py
+    def sample_with_partial_logprob(self, model, conditioning, shape, logprob_steps=5):
+        x_t = torch.randn(shape, device=self.device)
+        total_logprob = torch.zeros((shape[0],), device=self.device)
+        
+        num_steps = self.timesteps
+        start_logprob_at = num_steps - logprob_steps
+        
+        for i, t in enumerate(reversed(range(num_steps))):
+            if i >= start_logprob_at:
+                x_t, lp = self.p_sample(model, x_t, t, conditioning, return_logprob=True)
+                total_logprob += lp
+            else:
+                with torch.no_grad():
+                    x_t = self.p_sample(model, x_t, t, conditioning, return_logprob=False)
+        
+        return x_t, total_logprob
