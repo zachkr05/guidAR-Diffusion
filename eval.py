@@ -272,8 +272,8 @@ def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL
 
             loss_history.append(traj_cost)
 
-            if (epoch + 1) % 10 == 0:
-                print(f"\nEpoch {epoch + 1}/{epochs} - Trajectory Cost: {traj_cost:.4f}") 
+            #if (epoch + 1) % 10 == 0:
+            print(f"\nEpoch {epoch + 1}/{epochs} - Trajectory Cost: {traj_cost:.4f}") 
 
         except (ValueError, RuntimeError) as e:
                     print(f"\nWarning: Could not compute path at epoch {epoch + 1}: {e}")
@@ -355,7 +355,7 @@ def evaluate():
     #print(diffused_cm)
     orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
     #print("original path: ", orig_path)
-    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-6, epochs=100, target_class="chair", wH=0.3, wF = 0, wK = 0.01, wL=0.0)
+    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-3, epochs=100, target_class="chair", wH=0.3, wF = 0, wK = 0.01, wL=0.0)
 
     #visualize_costmap()
     
