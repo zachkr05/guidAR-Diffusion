@@ -112,8 +112,8 @@ def trajectory_cost(orig_path: np.ndarray,
     # assumes you already defined:
     # hausdorff_distance(A,B) and discrete_frechet_distance(A,B)
     H = hausdorff_distance(orig_path, user_path)
-    #F = discrete_frechet_distance(orig_path, user_path)
-    F = 2
+    F = discrete_frechet_distance(orig_path, user_path)
+    #F = 2
     K = curvature_penalty(orig_path)
     L = length_ratio_penalty(orig_path, user_path)
     
@@ -152,26 +152,35 @@ def hausdorff_distance(A: np.ndarray, B: np.ndarray) -> float:
 def discrete_frechet_distance(A: np.ndarray, B: np.ndarray) -> float:
     """
     Discrete Fréchet distance between two point sequences (Eiter & Mannila DP).
-    O(N*M) time and memory.
+    Iterative version to avoid recursion depth issues.
     """
-    D = pairwise_dist(A, B)  # (N,M)
+    D = pairwise_dist(A, B)  # (N, M)
     N, M = D.shape
-    ca = np.full((N, M), -1.0, dtype=float)
+    
+    # ✅ Use iterative DP instead of recursion
+    ca = np.full((N, M), np.inf, dtype=float)
+    
+    # Base case
+    ca[0, 0] = D[0, 0]
+    
+    # Fill first column
+    for i in range(1, N):
+        ca[i, 0] = max(ca[i - 1, 0], D[i, 0])
+    
+    # Fill first row
+    for j in range(1, M):
+        ca[0, j] = max(ca[0, j - 1], D[0, j])
+    
+    # Fill rest of the table
+    for i in range(1, N):
+        for j in range(1, M):
+            ca[i, j] = max(
+                min(ca[i - 1, j], ca[i - 1, j - 1], ca[i, j - 1]),
+                D[i, j]
+            )
+    
+    return float(ca[N - 1, M - 1])
 
-    def c(i, j):
-        if ca[i, j] > -0.5:
-            return ca[i, j]
-        if i == 0 and j == 0:
-            ca[i, j] = D[0, 0]
-        elif i > 0 and j == 0:
-            ca[i, j] = max(c(i - 1, 0), D[i, 0])
-        elif i == 0 and j > 0:
-            ca[i, j] = max(c(0, j - 1), D[0, j])
-        else:
-            ca[i, j] = max(min(c(i - 1, j), c(i - 1, j - 1), c(i, j - 1)), D[i, j])
-        return ca[i, j]
-
-    return float(c(N - 1, M - 1))
 
 def finetune_models(model, batch, user_path, device,lr, target_class,wH,wF,wK,wL,epochs):
    
