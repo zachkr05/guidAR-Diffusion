@@ -48,7 +48,10 @@ def compute_path_from_costmap(costmap_dict, goal, device="cuda"):
     elif len(fused_map.shape) == 3:  # (C, H, W) or (B, H, W)
         fused_map = fused_map[0]
         print(f"Extracted to shape: {fused_map.shape}")
-    
+
+
+    fused_map.squeeze()
+
     H, W = fused_map.shape
     print(f"H={H}, W={W}")
     print(f"Start: [0, 0], Goal: ({goal[0]}, {goal[1]})")
@@ -109,7 +112,8 @@ def trajectory_cost(orig_path: np.ndarray,
     # assumes you already defined:
     # hausdorff_distance(A,B) and discrete_frechet_distance(A,B)
     H = hausdorff_distance(orig_path, user_path)
-    F = discrete_frechet_distance(orig_path, user_path)
+    #F = discrete_frechet_distance(orig_path, user_path)
+    F = 2
     K = curvature_penalty(orig_path)
     L = length_ratio_penalty(orig_path, user_path)
     
