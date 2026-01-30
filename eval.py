@@ -31,31 +31,40 @@ from MoE.ddpm import DDPM
 
 
 def compute_path_from_costmap(costmap_dict, goal, device="cuda"):
-    """
-    Fuses costmaps and computes a path through the fused map.
-    
-    Args:
-        costmap_dict: Dict of {class_name: [tensor]} where tensor is (B, 1, H, W)
-        goal: Tuple (goal_y, goal_x)
-        device: Device for computation
-        
-    Returns:
-        path_array: np.ndarray of shape (N, 2) with [x, y] coordinates
-    """
-    # Fuse costmaps
     fused_map = fuse_costmaps(costmap_dict)
     
     if isinstance(fused_map, torch.Tensor):
         fused_map = fused_map.cpu().detach().numpy()
-
-    # Route through the fused map
-    path = route_through_array(fused_map, [0, 0], (goal[0], goal[1]), fully_connected=True)
+    
+    # ✅ DEBUG: Print shapes and values
+    print(f"Fused map shape: {fused_map.shape}")
+    print(f"Goal value: {goal}")
+    print(f"Goal type: {type(goal)}")
+    
+    # Check if fused_map is correct shape
+    if len(fused_map.shape) == 4:  # (B, C, H, W)
+        fused_map = fused_map[0, 0]  # Extract first batch/channel
+        print(f"Extracted to shape: {fused_map.shape}")
+    elif len(fused_map.shape) == 3:  # (C, H, W) or (B, H, W)
+        fused_map = fused_map[0]
+        print(f"Extracted to shape: {fused_map.shape}")
+    
+    H, W = fused_map.shape
+    print(f"H={H}, W={W}")
+    print(f"Start: [0, 0], Goal: ({goal[0]}, {goal[1]})")
+    
+    # ✅ Ensure goal is within bounds
+    goal_y = int(np.clip(goal[0], 0, H - 1))
+    goal_x = int(np.clip(goal[1], 0, W - 1))
+    
+    print(f"Clipped goal: ({goal_y}, {goal_x})")
+    
+    path = route_through_array(fused_map, [0, 0], [goal_y, goal_x], fully_connected=True)
     
     if path[0] is None:
         raise ValueError("No valid path found through costmap")
     
     path_array = np.array(path[0])
-    # Convert from (y, x) to (x, y)
     x_np = path_array[:, 1]
     y_np = path_array[:, 0]
     
