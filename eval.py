@@ -355,14 +355,14 @@ def evaluate():
     #print(diffused_cm)
     orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
     #print("original path: ", orig_path)
-    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-3, epochs=100, target_class="chair", wH=0.3, wF = 0, wK = 0.01, wL=0.0)
+    finetune_models(model=model, batch=first_batch, user_path=user_path, device=device, lr=1e-3, epochs=10, target_class="chair", wH=1, wF = 0, wK = 0.01, wL=0.0)
 
 
-    original_image_tensor = diffused_cm[target_cls][0]
+    original_image_tensor = diffused_cm["chair"][0]
     
     visualize_improvement(
         model=model,
-        target_class=target_cls,
+        target_class="chair",
         features=features,
         device=device,
         original_generated=original_image_tensor

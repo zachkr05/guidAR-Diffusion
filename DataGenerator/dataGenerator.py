@@ -10,7 +10,7 @@ from typing import List, Dict
 
 class CostmapDataset(Dataset):
 
-    def __init__(self, n_samples = 1000000, H=128, W=128, max_num_obstacles=3, min_total_obstacles=3, min_num_obstacles=0):
+    def __init__(self, n_samples = 1000000, H=128, W=128, max_num_obstacles=3, min_total_obstacles=3, min_num_obstacles=2):
         self.H = H
         self.W = W
         self.cost = np.zeros((H, W), dtype=np.float32)
