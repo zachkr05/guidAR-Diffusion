@@ -135,7 +135,7 @@ def finetune_models_focused(
     # Other class maps (frozen during training)
     other_class_maps = {}
     for cls in model.obstacle_classes:
-        if cls != target_class:
+        if cls != target_classes:
             other_class_maps[cls] = targets[cls].to(device).detach()
     
     loss_history = []
@@ -149,9 +149,6 @@ def finetune_models_focused(
         
         B = x_0_gt.shape[0]
         
-        # --- Forward pass through diffusion ---
-        # Use a MIX of timesteps, but bias toward small t for clearer x_0 prediction
-        # Small t = less noise = clearer signal
         t = torch.randint(0, ddpm.timesteps // 4, (B,), device=device).long()
         
         x_t, noise = ddpm.q_sample(x_0_gt, t)
@@ -166,10 +163,9 @@ def finetune_models_focused(
         # =================================================================
         # Loss 2: Planning loss (THE MAIN LEARNING SIGNAL)
         # =================================================================
-        # Fuse with other classes
         maps_to_fuse = [x_0_pred]
         for cls in model.obstacle_classes:
-            if cls != target_class:
+            if cls != target_classes:
                 maps_to_fuse.append(other_class_maps[cls])
         
         stacked = torch.stack(maps_to_fuse, dim=1).squeeze(2)

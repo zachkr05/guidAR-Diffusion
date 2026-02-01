@@ -107,7 +107,6 @@ def evaluate():
     #Generate costmaps and get user input
     orig_path, user_path = get_user_input(obstacle_classes= obstacle_classes,batch=batch,model=model,device=device,ddpm=ddpm,)
 
-
     if np.all(user_path == None):
         print("No modifications made to original path!")
         return None
@@ -125,19 +124,6 @@ def evaluate():
         ddpm=ddpm,
         planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
     )
-    original_image_tensor = diffused_cm["chair"][0]
-    
-    visualize_improvement(
-        model=model,
-        target_class="chair",
-        features=features,
-        targets=targets,
-        goal=goal,
-        device=device,
-        diffused_cm_old=diffused_cm,  # Pass the whole dict, not just chair
-        positions=positions,
-        radii=radii
-    ) 
 
 def visualize_improvement(model, target_class, features, targets, goal, device, diffused_cm_old, positions, radii):
     """
