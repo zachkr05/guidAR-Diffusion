@@ -10,11 +10,6 @@ from torch.optim import AdamW
 from tqdm import tqdm
 import numpy as np
 
-from closest_obstacle_utils import (
-    compute_path_delta_centroid,
-    find_closest_obstacle,
-)
-
 
 
 def compute_path_difference_mask(orig_path, user_path, H, W, device, threshold=5.0, sigma=5.0):
@@ -118,25 +113,6 @@ def finetune_models_focused(
     
     features, targets, positions, radii, goal = batch
     H, W = 128, 128
-    
-    # =========================================================================
-    # Step 1: Info about the edit (for logging only)
-    # =========================================================================
-    edit_centroid = compute_path_delta_centroid(orig_path, user_path)
-    print(f"\n[IRL] Edit centroid: ({edit_centroid[0]:.1f}, {edit_centroid[1]:.1f})")
-    
-    try:
-        closest_idx, dist = find_closest_obstacle(
-            edit_centroid, positions, radii, target_class, batch_idx=0
-        )
-        obs_pos = positions[0][target_class][closest_idx]
-        obs_rad = radii[0][target_class][closest_idx]
-        print(f"[IRL] Closest {target_class}: #{closest_idx} at "
-              f"({obs_pos[0]:.1f}, {obs_pos[1]:.1f}), dist={dist:.1f}")
-    except (ValueError, KeyError) as e:
-        print(f"[IRL] Note: {e}")
-        closest_idx = None
-    
     # =========================================================================
     # Step 2: Setup
     # =========================================================================
@@ -279,4 +255,4 @@ def finetune_models_focused(
     print(f"  Final planning loss: {loss_history[-1]['plan']:.4f}")
     
     expert_model.set_finetune(active=False)
-    return loss_history, closest_idx
+    return loss_history 

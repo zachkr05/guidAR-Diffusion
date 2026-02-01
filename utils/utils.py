@@ -11,7 +11,27 @@ from matplotlib import cm
 import numpy as np
 from skimage.graph import route_through_array
 from scipy.interpolate import BSpline
-from spline import *
+from .spline import *
+from torch.utils.data.dataloader import default_collate
+
+
+def collate_ignore_metadata(batch):
+    """
+
+    Fixes stacking bug cus some of the features vary in length 
+
+    """
+
+    features = default_collate([item[0] for item in batch])
+    targets = default_collate([item[1] for item in batch])
+    goals = default_collate([item[4] for item in batch])
+    
+    
+    positions = [item[2] for item in batch]
+    radii = [item[3] for item in batch]
+
+    return features, targets, positions, radii, goals
+
 
 
 def compute_path_from_costmap(costmap_dict, goal, device="cuda"):
