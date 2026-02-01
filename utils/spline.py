@@ -103,7 +103,7 @@ def generate_clamped_spline(x_np, y_np, k, num_ctrl_pts):
     P = np.asarray(P)
 
     t0, t1 = U[k], U[-k-1]
-    t = np.linspace(t0, t1, 500)
+    t = np.linspace(t0, t1, 800)
 
     splx = BSpline(U, P[:, 0], k)
     sply = BSpline(U, P[:, 1], k)

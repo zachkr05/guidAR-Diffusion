@@ -196,11 +196,7 @@ def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position
     min_val = np.min(map_np)
 
     map_np = ((map_np-min_val)/(max_val - min_val) +1e-8)
-    #map_np[map_np > 0.8] = np.inf
-    #https://stackoverflow.com/questions/32551536/draw-marker-in-image
-    #plt.annotate('25, 50', xy=(25, 50))
-    #print(obstacle_positions)
-   
+    
     fig, ax = plt.subplots()
     colors = {'chair': 'green', 'table': 'red', 'bomb': 'blue'}
 
@@ -229,12 +225,11 @@ def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position
     dragger = DraggableBSpline(ax, U, P, k, n_samples=800)
 
     ax.imshow(map_np, origin='lower')
-    #plt.colorbar()
     ax.legend(loc='best')
     plt.show()
     print("finished")
     
-    orig_path = np.column_stack([x_np, y_np])
+    orig_path = np.column_stack([x_s, y_s])
     user_path = np.column_stack([dragger.x, dragger.y])
 
     return orig_path, user_path
