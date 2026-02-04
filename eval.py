@@ -46,8 +46,6 @@ def make_expert_target(user_path, H, W, device):
     
     return target
 
-
-
 def get_user_input(batch,model,device,ddpm, obstacle_classes):
     
     diffused_cm = {cls: [] for cls in obstacle_classes}
@@ -66,7 +64,7 @@ def get_user_input(batch,model,device,ddpm, obstacle_classes):
     fused_costmap = fuse_costmaps(diffused_cm)
     orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
         
-    return orig_path, user_path
+    return orig_path, user_path, diffused_cm
 
 def evaluate():
    
@@ -105,12 +103,24 @@ def evaluate():
     batch = next(iter(loader))
 
     #Generate costmaps and get user input
-    orig_path, user_path = get_user_input(obstacle_classes= obstacle_classes,batch=batch,model=model,device=device,ddpm=ddpm,)
+    orig_path, user_path, diffused_cms = get_user_input(obstacle_classes= obstacle_classes,batch=batch,model=model,device=device,ddpm=ddpm,)
 
     if np.all(user_path == None):
         print("No modifications made to original path!")
         return None
     
+    #Get classes to modify
+    target_classes, area_mask = identify_classes(obstacle_classes=obstacle_classes,batch=batch, orig_path=orig_path, user_path=user_path)
+
+    visualize_contributions(
+        orig_path=orig_path,
+        user_path=user_path, 
+        class_contributions=target_classes,
+        area_mask=area_mask,
+        diffused_cms=diffused_cms,
+        obstacle_classes=obstacle_classes
+    )
+
     #Finetune the models
     loss_history = finetune_models_focused(
         model=model,
@@ -124,6 +134,50 @@ def evaluate():
         ddpm=ddpm,
         planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
     )
+
+
+def visualize_contributions(orig_path, user_path, class_contributions, area_mask, diffused_cms, obstacle_classes, height=128, width=128):
+    """
+    Visualize the area between paths and class contributions side by side.
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # Left: Fused costmap with both paths
+    fused = fuse_costmaps(diffused_cms)[0, 0].detach().cpu().numpy()
+    axes[0].imshow(fused, origin='lower', cmap='viridis')
+    axes[0].plot(orig_path[:, 0], orig_path[:, 1], 'r-', linewidth=2, label='Original')
+    axes[0].plot(user_path[:, 0], user_path[:, 1], 'g-', linewidth=2, label='User')
+    axes[0].set_title("Paths on Fused Costmap")
+    axes[0].legend()
+    
+    # Middle: Area mask between paths
+    axes[1].imshow(area_mask, origin='lower', cmap='Reds', alpha=0.7)
+    axes[1].plot(orig_path[:, 0], orig_path[:, 1], 'r-', linewidth=2, label='Original')
+    axes[1].plot(user_path[:, 0], user_path[:, 1], 'g-', linewidth=2, label='User')
+    axes[1].set_title(f"Edit Region\n({int(area_mask.sum())} pixels)")
+    axes[1].legend()
+    
+    # Right: Bar chart of class contributions
+    classes = list(class_contributions.keys())
+    values = [class_contributions[c] for c in classes]
+    colors = {'chair': 'green', 'table': 'red', 'bomb': 'blue'}
+    bar_colors = [colors.get(c, 'gray') for c in classes]
+    
+    bars = axes[2].bar(classes, values, color=bar_colors)
+    axes[2].set_ylim(0, 1)
+    axes[2].set_ylabel("Contribution Fraction")
+    axes[2].set_title("Class Contributions\nin Edit Region")
+    
+    # Add percentage labels on bars
+    for bar, val in zip(bars, values):
+        axes[2].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
+                     f'{val*100:.1f}%', ha='center', fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig("contribution_analysis.png")
+    plt.show()
+    
+    return fig
 
 def visualize_improvement(model, target_class, features, targets, goal, device, diffused_cm_old, positions, radii):
     """

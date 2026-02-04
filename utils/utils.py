@@ -13,6 +13,93 @@ from skimage.graph import route_through_array
 from scipy.interpolate import BSpline
 from .spline import *
 from torch.utils.data.dataloader import default_collate
+from scipy.spatial import ConvexHull
+from skimage.draw import polygon
+
+
+
+
+
+def identify_classes(orig_path, user_path, obstacle_classes, batch, height=128 , width = 128):
+
+    _,_, positions,radii, _ = batch
+
+    #Extract all probabilities in the scene
+    prob_dict = obtain_probabilities(obstacle_classes, positions,radii, height,width)
+
+    #Find the area between the two curves
+    area_mask = get_area_between_paths(orig_path, user_path, height, width)
+    
+    #Find the probability contributed by each class within the area of the two curves
+    class_contributions = {}
+    for cls in obstacle_classes:
+        class_contributions[cls] = (prob_dict[cls] * area_mask).sum() / (area_mask.sum() + 1e-8)
+  
+    #Re-normalize the values 
+    total = sum(class_contributions.values()) + 1e-8
+    class_contributions = {cls: v / total for cls, v in class_contributions.items()}
+    
+    return class_contributions, area_mask
+
+def get_area_between_paths(orig_path, user_path, height, width):
+    
+    #Create pts and mask
+    polygon_pts = np.vstack([orig_path, user_path[::-1]])
+    mask = np.zeros((height, width), dtype=np.float32)
+
+    #Fill mask
+    rr, cc = polygon(polygon_pts[:, 1], polygon_pts[:, 0], shape=(height, width))
+    mask[rr,cc] = 1.0
+    
+    return mask
+
+def obtain_probabilities(obstacle_classes, positions, radii, height=128 , width = 128, temperature=5.0):
+    
+    # print(type(positions)) print(positions) print(type(radii)) print(radii)
+    
+    rows, cols = np.ogrid[:height, :width]
+
+    pos_dict = positions [0] if isinstance(positions, list) else positions
+    rad_dict = radii[0] if isinstance(radii, list) else radii
+
+    distances = {}
+    valid_classes = []
+
+    for cls in obstacle_classes:
+        cls_positions = pos_dict.get(cls, [])
+
+        if len(cls_positions) == 0:
+            distances[cls] = np.full((height, width), np.inf)
+        else:
+            min_dist = np.full((height, width), np.inf)
+            for pos in cls_positions:
+                r, c = pos[0], pos[1]
+                dist = np.sqrt((rows - r)**2 + (cols-c)**2)
+                min_dist = np.minimum(min_dist, dist)
+            distances[cls] = min_dist
+            valid_classes.append(cls)
+
+    dist_stack = np.stack([distances[cls] for cls in obstacle_classes], axis=0)
+
+    min_dist_all = np.min(dist_stack, axis=0, keepdims=True)
+    min_dist_all = np.where(np.isinf(min_dist_all,), 0, min_dist_all)
+
+    rel_dist = dist_stack - min_dist_all
+
+    closeness_stack = np.exp(-rel_dist / temperature)
+
+    # Zero out classes with no obstacles
+    mask = np.array([1.0 if cls in valid_classes else 0.0 for cls in obstacle_classes])
+    closeness_stack = closeness_stack * mask[:, None, None]
+    
+    # Normalize to get responsibilities (sum to 1 at each cell)
+    sum_closeness = np.sum(closeness_stack, axis=0, keepdims=True) + 1e-8
+    resp_stack = closeness_stack / sum_closeness
+    
+    # Convert to dict
+    prob_dict = {cls: resp_stack[i] for i, cls in enumerate(obstacle_classes)}
+    
+    return prob_dict
 
 
 def collate_ignore_metadata(batch):
@@ -232,7 +319,7 @@ def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position
     orig_path = np.column_stack([x_s, y_s])
     user_path = np.column_stack([dragger.x, dragger.y])
 
-    return orig_path, user_path
+    return orig_path, user_path, 
 
 def visualize_3d(fused_cm):
     map_np = fused_cm[0,0].detach().cpu().numpy()

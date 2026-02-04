@@ -35,7 +35,9 @@ from .utils import (
     visualize_3d,
     fuse_costmaps,
     cosine_beta_schedule,
-)
+    identify_classes,
+
+    )
 
 __all__ = [
     # IRL finetuning
@@ -70,4 +72,4 @@ __all__ = [
     'visualize_3d',
     'fuse_costmaps',
     'cosine_beta_schedule',
-]
+    'identify_classes']
