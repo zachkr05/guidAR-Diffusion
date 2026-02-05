@@ -2,7 +2,7 @@
 Utilities for IRL-based diffusion costmap finetuning.
 """
 
-from .finetune_focused import (
+from .finetune import (
     finetune_models_focused,
     compute_path_difference_mask,
     make_path_target,
@@ -44,7 +44,7 @@ __all__ = [
     'compute_path_difference_mask',
     'make_path_target',
     'gaussian_blur',
-    
+    #'finetune_models', 
     # Planner
     'SoftGridPlanner',
     

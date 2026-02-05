@@ -16,35 +16,9 @@ from MoE.ddpm import DDPM
 from MoE.UNet import LightweightUNet
 from train import ExpertEnsemble
 from utils import *
-from utils.finetune_focused import finetune_models_focused
+from utils.finetune import finetune_models_focused
 from utils.planner import SoftGridPlanner
 
-
-def make_expert_target(user_path, H, W, device):
-    """
-
-    Turns user Demonstrated path into a gaussian probability distribution on the current costmap. 
-
-    """
-    target = torch.zeros((1, 1, H, W), device=device)
-
-    
-    #Turn user path into a tensor
-    if isinstance(user_path, np.ndarray):
-        path_tensor = torch.from_numpy(user_path).float().to(device)
-    else:
-        path_tensor = user_path
-
-    xs = path_tensor[:, 0].long().clamp(0, W-1)
-    ys = path_tensor[:, 1].long().clamp(0, H-1)
-    
-    target[0, 0, ys, xs] = 1.0
-    
-    #Make it a gaussian distribution
-    target = F.avg_pool2d(target, kernel_size=3, stride=1, padding=1)
-    target = target / (target.sum() + 1e-8) # norm to 1 since its a probabilit dist.
-    
-    return target
 
 def get_user_input(batch,model,device,ddpm, obstacle_classes):
     
@@ -121,7 +95,7 @@ def evaluate():
     )
 
     print(f"Found {len(edit_regions)} edit region(s)")
-
+    filtered_edit_regions = []
     affected_class_threshold = 0.83
     for i, (class_contributions, points, mask) in enumerate(edit_regions):
     #    dominant_class = max(class_contributions, key=class_contributions.get)
@@ -133,13 +107,15 @@ def evaluate():
             best_class = max(remaining_classes, key = remaining_classes.get)
             curr_prob += remaining_classes[best_class]
             affected_classes.add(best_class)
-
+        filtered_edit_regions.append([mask, points, affected_classes])
         print(f" Region {i}: {len(points)} pixels ; Affected Classes: {affected_classes}")
 
     #Different scene to eval
 
     eval_batch = next(iter(loader))
+   
     
+    print(filtered_edit_regions)
     
     #Eval new scene before finetuning the models
     diffused_cm = {cls: [] for cls in obstacle_classes}
@@ -156,26 +132,20 @@ def evaluate():
             diffused_cm[cls].append(generated)
     
     before_fused_costmap = fuse_costmaps(diffused_cm)
-    
-    #Get difference between the models
-    
-     
-
-    return 
-
+   
     #Finetune the models
-    #loss_history = finetune_models_focused(
-    #    model=model,
-    #    batch=batch,
-    #    orig_path=orig_path,  # You already have this!
-    #    user_path=user_path,
-    #    device=device,
-    #    lr=1e-4,
-    #    target_class="chair",
-    #    epochs=500,
-    #    ddpm=ddpm,
-    #    planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
-    #)
+    loss_history = finetune_models(
+        model=model,
+        batch=train_batch,
+        orig_path=orig_path,
+        user_path=user_path,
+        device=device,
+        lr=1e-4,
+        edit_regions=filtered_edit_regions,
+        epochs=500,
+        ddpm=ddpm,
+        planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
+    )
 
 if __name__ == "__main__":
     

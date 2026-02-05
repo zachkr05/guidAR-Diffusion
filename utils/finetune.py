@@ -10,8 +10,6 @@ from torch.optim import AdamW
 from tqdm import tqdm
 import numpy as np
 
-
-
 def compute_path_difference_mask(orig_path, user_path, H, W, device, threshold=5.0, sigma=5.0):
     """
     Returns a mask that's 1.0 where the paths differ significantly,
