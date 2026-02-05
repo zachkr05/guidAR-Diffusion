@@ -35,8 +35,7 @@ from .utils import (
     visualize_3d,
     fuse_costmaps,
     cosine_beta_schedule,
-    identify_classes,
-
+    get_edit_regions,
     )
 
 __all__ = [
@@ -72,4 +71,4 @@ __all__ = [
     'visualize_3d',
     'fuse_costmaps',
     'cosine_beta_schedule',
-    'identify_classes']
+    'get_edit_regions', ]

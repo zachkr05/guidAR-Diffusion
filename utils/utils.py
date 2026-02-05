@@ -15,43 +15,135 @@ from .spline import *
 from torch.utils.data.dataloader import default_collate
 from scipy.spatial import ConvexHull
 from skimage.draw import polygon
+from sklearn.cluster import DBSCAN
 
-
-
-
-
-def identify_classes(orig_path, user_path, obstacle_classes, batch, height=128 , width = 128):
-
-    _,_, positions,radii, _ = batch
-
-    #Extract all probabilities in the scene
-    prob_dict = obtain_probabilities(obstacle_classes, positions,radii, height,width)
-
-    #Find the area between the two curves
-    area_mask = get_area_between_paths(orig_path, user_path, height, width)
+def get_edit_regions(orig_path, user_path, obstacle_classes, batch, 
+                     height=128, width=128, min_area=50):
+    """
+    Identify distinct edit regions by detecting sign changes in the 
+    cross product (signed area) between paths.
     
-    #Find the probability contributed by each class within the area of the two curves
-    class_contributions = {}
-    for cls in obstacle_classes:
-        class_contributions[cls] = (prob_dict[cls] * area_mask).sum() / (area_mask.sum() + 1e-8)
-  
-    #Re-normalize the values 
-    total = sum(class_contributions.values()) + 1e-8
-    class_contributions = {cls: v / total for cls, v in class_contributions.items()}
+    Returns:
+        List of [class_contributions, edit_points, area_mask] tuples
+    """
+    from scipy.interpolate import interp1d
+    from skimage.draw import polygon
     
-    return class_contributions, area_mask
-
-def get_area_between_paths(orig_path, user_path, height, width):
+    _, _, positions, radii, _ = batch
+    prob_dict = obtain_probabilities(obstacle_classes, positions, radii, height, width)
     
-    #Create pts and mask
-    polygon_pts = np.vstack([orig_path, user_path[::-1]])
-    mask = np.zeros((height, width), dtype=np.float32)
-
-    #Fill mask
-    rr, cc = polygon(polygon_pts[:, 1], polygon_pts[:, 0], shape=(height, width))
-    mask[rr,cc] = 1.0
+    # Resample both paths to same number of points
+    n_samples = max(len(orig_path), len(user_path), 800)
     
-    return mask
+    def resample_path(path, n):
+        t_orig = np.linspace(0, 1, len(path))
+        t_new = np.linspace(0, 1, n)
+        fx = interp1d(t_orig, path[:, 0], kind='linear')
+        fy = interp1d(t_orig, path[:, 1], kind='linear')
+        return np.column_stack([fx(t_new), fy(t_new)])
+    
+    orig_resampled = resample_path(orig_path, n_samples)
+    user_resampled = resample_path(user_path, n_samples)
+    
+    # Compute cross product (signed area indicator) at each point
+    # Positive = user is to the left of orig, Negative = user is to the right
+    diff = user_resampled - orig_resampled
+    
+    # Use cross product with path tangent to get signed distance
+    tangent = np.gradient(orig_resampled, axis=0)
+    cross = diff[:, 0] * tangent[:, 1] - diff[:, 1] * tangent[:, 0]
+    
+    # Also compute absolute distance for threshold
+    distances = np.linalg.norm(diff, axis=1)
+    
+    # Find where paths are "together" (distance < threshold)
+    threshold = 2.0
+    is_together = distances < threshold
+    
+    # Find sign of cross product (which side user path is on)
+    sign = np.sign(cross)
+    sign[is_together] = 0  # Mark as "no side" when paths are together
+    
+    # Detect region boundaries: where sign changes OR paths come together
+    # A region is a contiguous stretch where sign is non-zero and constant
+    
+    regions = []
+    in_region = False
+    region_start = 0
+    current_sign = 0
+    
+    for i in range(n_samples):
+        if not in_region:
+            # Start new region if we diverge
+            if not is_together[i]:
+                in_region = True
+                region_start = i
+                current_sign = sign[i]
+        else:
+            # End region if:
+            # 1. Paths come back together
+            # 2. Sign changes (paths cross)
+            sign_changed = (sign[i] != 0 and sign[i] != current_sign)
+            
+            if is_together[i] or sign_changed:
+                # Save the region
+                regions.append((region_start, i))
+                
+                # If sign changed, start a new region immediately
+                if sign_changed and not is_together[i]:
+                    region_start = i
+                    current_sign = sign[i]
+                    in_region = True
+                else:
+                    in_region = False
+    
+    # Handle region that extends to the end
+    if in_region:
+        regions.append((region_start, n_samples - 1))
+    
+    # Build results for each region
+    results = []
+    
+    for start_idx, end_idx in regions:
+        if end_idx - start_idx < 5:  # Skip tiny regions
+            continue
+            
+        orig_segment = orig_resampled[start_idx:end_idx+1]
+        user_segment = user_resampled[start_idx:end_idx+1]
+        
+        if len(orig_segment) < 2:
+            continue
+        
+        # Create polygon from the two path segments
+        polygon_pts = np.vstack([orig_segment, user_segment[::-1]])
+        
+        # Create mask for this region
+        cluster_mask = np.zeros((height, width), dtype=np.float32)
+        
+        rr, cc = polygon(polygon_pts[:, 1], polygon_pts[:, 0], shape=(height, width))
+        if len(rr) == 0:
+            continue
+        cluster_mask[rr, cc] = 1.0
+        
+        # Skip if area too small
+        if cluster_mask.sum() < min_area:
+            continue
+        
+        # Get edit points
+        ys, xs = np.where(cluster_mask > 0)
+        cluster_points = np.column_stack([xs, ys])
+        
+        # Compute class contributions
+        contributions = {}
+        for cls in obstacle_classes:
+            contributions[cls] = (prob_dict[cls] * cluster_mask).sum() / (cluster_mask.sum() + 1e-8)
+        
+        total = sum(contributions.values()) + 1e-8
+        contributions = {cls: v / total for cls, v in contributions.items()}
+        
+        results.append([contributions, cluster_points, cluster_mask])
+    
+    return results
 
 def obtain_probabilities(obstacle_classes, positions, radii, height=128 , width = 128, temperature=5.0):
     

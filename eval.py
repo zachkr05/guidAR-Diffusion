@@ -110,16 +110,22 @@ def evaluate():
         return None
     
     #Get classes to modify
-    target_classes, area_mask = identify_classes(obstacle_classes=obstacle_classes,batch=batch, orig_path=orig_path, user_path=user_path)
-
-    visualize_contributions(
+    #target_classes, area_mask = identify_classes(obstacle_classes=obstacle_classes,batch=batch, orig_path=orig_path, user_path=user_path)
+    
+    # Get edit regions
+    edit_regions = get_edit_regions(
         orig_path=orig_path,
-        user_path=user_path, 
-        class_contributions=target_classes,
-        area_mask=area_mask,
-        diffused_cms=diffused_cms,
-        obstacle_classes=obstacle_classes
+        user_path=user_path,
+        obstacle_classes=obstacle_classes,
+        batch=batch,
     )
+
+    print(f"Found {len(edit_regions)} edit region(s)")
+
+    #for i, (class_contributions, points, mask) in enumerate(edit_regions):
+    #    dominant_class = max(class_contributions, key=class_contributions.get)
+    #    print(f"  Region {i}: {len(points)} pixels, dominant class = {dominant_class} ({class_contributions[dominant_class]*100:.1f}%)")
+     
 
     #Finetune the models
     loss_history = finetune_models_focused(
