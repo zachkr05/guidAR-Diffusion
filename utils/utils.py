@@ -17,6 +17,23 @@ from scipy.spatial import ConvexHull
 from skimage.draw import polygon
 from sklearn.cluster import DBSCAN
 
+def gaussian_blur(x, kernel_size, sigma):
+    """Apply Gaussian blur to tensor."""
+    # Create 1D Gaussian kernel
+    coords = torch.arange(kernel_size, device=x.device).float() - kernel_size // 2
+    kernel_1d = torch.exp(-coords**2 / (2 * sigma**2))
+    kernel_1d = kernel_1d / kernel_1d.sum()
+    
+    # Create 2D kernel
+    kernel_2d = kernel_1d[:, None] * kernel_1d[None, :]
+    kernel_2d = kernel_2d.view(1, 1, kernel_size, kernel_size)
+    
+    # Apply
+    padding = kernel_size // 2
+    return F.conv2d(x, kernel_2d, padding=padding)
+
+
+
 def get_edit_regions(orig_path, user_path, obstacle_classes, batch, 
                      height=128, width=128, min_area=50):
     """

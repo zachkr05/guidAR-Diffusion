@@ -9,31 +9,24 @@ import torch.nn.functional as F
 from torch.optim import AdamW
 from tqdm import tqdm
 import numpy as np
+from scipy.spatial.distance import cdist
 
 def compute_path_difference_mask(orig_path, user_path, H, W, device, threshold=5.0, sigma=5.0):
     """
-    Returns a mask that's 1.0 where the paths differ significantly,
-    0.0 where they're the same.
+    
+    Anywhere where User's path deviates make a mask and dilate it with guassian blur
+
     """
     orig_np = orig_path if isinstance(orig_path, np.ndarray) else orig_path.cpu().numpy()
     user_np = user_path if isinstance(user_path, np.ndarray) else user_path.cpu().numpy()
     
-    # For each point on user_path, find distance to nearest point on orig_path
-    from scipy.spatial.distance import cdist
-    
     # Resample paths to same length for comparison
     n_points = max(len(orig_np), len(user_np))
-    
-    # Distance from each user point to closest original point
-    dists = cdist(user_np, orig_np).min(axis=1)  # (len(user_path),)
+    dists = cdist(user_np, orig_np).min(axis=1)
     
     # Points where user deviated significantly
     changed_mask = dists > threshold
     changed_points = user_np[changed_mask]
-    
-    if len(changed_points) == 0:
-        # No significant changes, return empty mask
-        return torch.zeros((1, 1, H, W), device=device)
     
     # Create spatial mask around changed points
     mask = torch.zeros((1, 1, H, W), device=device)
@@ -71,20 +64,41 @@ def make_path_target(path, H, W, device, sigma=3.0):
     return target
 
 
-def gaussian_blur(x, kernel_size, sigma):
-    """Apply Gaussian blur to tensor."""
-    # Create 1D Gaussian kernel
-    coords = torch.arange(kernel_size, device=x.device).float() - kernel_size // 2
-    kernel_1d = torch.exp(-coords**2 / (2 * sigma**2))
-    kernel_1d = kernel_1d / kernel_1d.sum()
+def finetune_models(
+        model,
+        batch,
+        orig_path,
+        user_path,
+        device,
+        lr,
+        edit_regions,
+        epochs,
+        ddpm,
+        planner,
+        w_diffusion=1,
+        w_plan = 1,
+        ):
+ 
+    features, targets, positions, radii, goal = batch
+    H, W = 128, 128
+ 
+    for contributed_classes, points, mask in edit_regions: 
+        
+        expert_models = []
+
+        for cls in contributed_classes:
+            exp_model = model.experts[cls]
+            exp_model.set_finetune(active=True)
+            expert_models.append(model.experts[cls])
+            
+        optim = AdamW(
+                [p for p in expert_model.parameters() if p.requires_grad],
+                lr=lr
+            
+                )
+        edit_path_target = make_path_target(user_path, H, W, device, sigma=5.0)
+        orig_path_target = make_path_target(orig_path, H, W, device, sigma=5.0)
     
-    # Create 2D kernel
-    kernel_2d = kernel_1d[:, None] * kernel_1d[None, :]
-    kernel_2d = kernel_2d.view(1, 1, kernel_size, kernel_size)
-    
-    # Apply
-    padding = kernel_size // 2
-    return F.conv2d(x, kernel_2d, padding=padding)
 
 
 def finetune_models_focused(
@@ -102,15 +116,10 @@ def finetune_models_focused(
     w_diffusion=1.0,
     w_plan=1.0,
 ):
-    """
-    Simplified IRL finetuning.
-    
-    Key insight: Let the planning loss do the work. The diffusion loss
-    provides stability, the planning loss provides the learning signal.
-    """
     
     features, targets, positions, radii, goal = batch
     H, W = 128, 128
+
     # =========================================================================
     # Step 2: Setup
     # =========================================================================
@@ -241,9 +250,6 @@ def finetune_models_focused(
                       f"cost_user_path={cost_on_user_path.item():.3f} (gt={cost_on_user_path_gt.item():.3f}), "
                       f"vis_user_path={vis_on_user_path.item():.4f}")
     
-    # =========================================================================
-    # Summary
-    # =========================================================================
     print(f"\n[IRL] Training complete.")
     print(f"  Final diffusion loss: {loss_history[-1]['diffusion']:.6f}")
     print(f"  Final planning loss: {loss_history[-1]['plan']:.4f}")
