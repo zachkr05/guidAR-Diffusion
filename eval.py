@@ -122,24 +122,35 @@ def evaluate():
 
     print(f"Found {len(edit_regions)} edit region(s)")
 
-    #for i, (class_contributions, points, mask) in enumerate(edit_regions):
+    affected_class_threshold = 0.83
+    for i, (class_contributions, points, mask) in enumerate(edit_regions):
     #    dominant_class = max(class_contributions, key=class_contributions.get)
     #    print(f"  Region {i}: {len(points)} pixels, dominant class = {dominant_class} ({class_contributions[dominant_class]*100:.1f}%)")
-     
+        curr_prob = 0
+        affected_classes = set()
+        while(curr_prob<affected_class_threshold):
+            remaining_classes = {k: v for k, v in class_contributions.items() if k not in affected_classes}
+            best_class = max(remaining_classes, key = remaining_classes.get)
+            curr_prob += remaining_classes[best_class]
+            affected_classes.add(best_class)
+
+        print(f" Region {i}: {len(points)} pixels ; Affected Classes: {affected_classes}")
+
+    return 
 
     #Finetune the models
-    loss_history = finetune_models_focused(
-        model=model,
-        batch=batch,
-        orig_path=orig_path,  # You already have this!
-        user_path=user_path,
-        device=device,
-        lr=1e-4,
-        target_class="chair",
-        epochs=500,
-        ddpm=ddpm,
-        planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
-    )
+    #loss_history = finetune_models_focused(
+    #    model=model,
+    #    batch=batch,
+    #    orig_path=orig_path,  # You already have this!
+    #    user_path=user_path,
+    #    device=device,
+    #    lr=1e-4,
+    #    target_class="chair",
+    #    epochs=500,
+    #    ddpm=ddpm,
+    #    planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
+    #)
 
 
 def visualize_contributions(orig_path, user_path, class_contributions, area_mask, diffused_cms, obstacle_classes, height=128, width=128):
