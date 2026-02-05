@@ -100,10 +100,10 @@ def evaluate():
 
     #Setup reverse diffusion process
     ddpm = DDPM(timesteps=1000, device=device)
-    batch = next(iter(loader))
+    train_batch = next(iter(loader))
 
     #Generate costmaps and get user input
-    orig_path, user_path, diffused_cms = get_user_input(obstacle_classes= obstacle_classes,batch=batch,model=model,device=device,ddpm=ddpm,)
+    orig_path, user_path, diffused_cms = get_user_input(obstacle_classes= obstacle_classes,batch=train_batch,model=model,device=device,ddpm=ddpm,)
 
     if np.all(user_path == None):
         print("No modifications made to original path!")
@@ -117,7 +117,7 @@ def evaluate():
         orig_path=orig_path,
         user_path=user_path,
         obstacle_classes=obstacle_classes,
-        batch=batch,
+        batch=train_batch,
     )
 
     print(f"Found {len(edit_regions)} edit region(s)")
@@ -136,6 +136,31 @@ def evaluate():
 
         print(f" Region {i}: {len(points)} pixels ; Affected Classes: {affected_classes}")
 
+    #Different scene to eval
+
+    eval_batch = next(iter(loader))
+    
+    
+    #Eval new scene before finetuning the models
+    diffused_cm = {cls: [] for cls in obstacle_classes}
+    features, targets, positions, radii, goal = eval_batch 
+
+    with torch.no_grad():
+        for cls in obstacle_classes:
+            expert_model = model.experts[cls]
+            cond = features[cls].to(device)
+            gt = targets[cls].to(device)
+
+            generated = ddpm.sample(expert_model, cond, shape=gt.shape)
+            
+            diffused_cm[cls].append(generated)
+    
+    before_fused_costmap = fuse_costmaps(diffused_cm)
+    
+    #Get difference between the models
+    
+     
+
     return 
 
     #Finetune the models
@@ -151,143 +176,6 @@ def evaluate():
     #    ddpm=ddpm,
     #    planner=SoftGridPlanner(iters=256, tau=1.0, step_cost=0.05).to(device),
     #)
-
-
-def visualize_contributions(orig_path, user_path, class_contributions, area_mask, diffused_cms, obstacle_classes, height=128, width=128):
-    """
-    Visualize the area between paths and class contributions side by side.
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    
-    # Left: Fused costmap with both paths
-    fused = fuse_costmaps(diffused_cms)[0, 0].detach().cpu().numpy()
-    axes[0].imshow(fused, origin='lower', cmap='viridis')
-    axes[0].plot(orig_path[:, 0], orig_path[:, 1], 'r-', linewidth=2, label='Original')
-    axes[0].plot(user_path[:, 0], user_path[:, 1], 'g-', linewidth=2, label='User')
-    axes[0].set_title("Paths on Fused Costmap")
-    axes[0].legend()
-    
-    # Middle: Area mask between paths
-    axes[1].imshow(area_mask, origin='lower', cmap='Reds', alpha=0.7)
-    axes[1].plot(orig_path[:, 0], orig_path[:, 1], 'r-', linewidth=2, label='Original')
-    axes[1].plot(user_path[:, 0], user_path[:, 1], 'g-', linewidth=2, label='User')
-    axes[1].set_title(f"Edit Region\n({int(area_mask.sum())} pixels)")
-    axes[1].legend()
-    
-    # Right: Bar chart of class contributions
-    classes = list(class_contributions.keys())
-    values = [class_contributions[c] for c in classes]
-    colors = {'chair': 'green', 'table': 'red', 'bomb': 'blue'}
-    bar_colors = [colors.get(c, 'gray') for c in classes]
-    
-    bars = axes[2].bar(classes, values, color=bar_colors)
-    axes[2].set_ylim(0, 1)
-    axes[2].set_ylabel("Contribution Fraction")
-    axes[2].set_title("Class Contributions\nin Edit Region")
-    
-    # Add percentage labels on bars
-    for bar, val in zip(bars, values):
-        axes[2].text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.02, 
-                     f'{val*100:.1f}%', ha='center', fontsize=12)
-    
-    plt.tight_layout()
-    plt.savefig("contribution_analysis.png")
-    plt.show()
-    
-    return fig
-
-def visualize_improvement(model, target_class, features, targets, goal, device, diffused_cm_old, positions, radii):
-    """
-    1. Fuse OLD costmaps (before finetuning) -> compute trajectory
-    2. Generate NEW costmap for target_class -> fuse with other classes -> compute trajectory
-    3. Visualize side by side
-    """
-    
-    torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
-    print(f"\nGenerating 'After' image for {target_class}...")
-    
-    # 1. Setup and generate new costmap for target class
-    expert_model = model.experts[target_class]
-    expert_model.eval()
-    ddpm = DDPM(timesteps=1000, device=device)
-    
-    cond = features[target_class].to(device)
-    shape = diffused_cm_old[target_class][0].shape  # Get shape from old generation
-    
-    with torch.no_grad():
-        new_generated = ddpm.sample(expert_model, cond, shape=shape)
-    
-    # 2. Build NEW diffused_cm dict (replace only the target class)
-    diffused_cm_new = {}
-    for cls in model.obstacle_classes:
-        if cls == target_class:
-            diffused_cm_new[cls] = [new_generated]
-        else:
-            diffused_cm_new[cls] = diffused_cm_old[cls]  # Keep others the same
-    
-    # 3. Fuse costmaps using your existing function
-    fused_old = fuse_costmaps(diffused_cm_old)
-    fused_new = fuse_costmaps(diffused_cm_new)
-    
-    # 4. Compute trajectories using your existing function
-    old_path, _ = get_user_adjustments(fused_old, positions, radii, goal)
-    new_path, _ = get_user_adjustments(fused_new, positions, radii, goal)
-    
-    # 5. Convert fused maps to numpy for plotting
-    # Adjust this based on what fuse_costmaps returns
-    if isinstance(fused_old, torch.Tensor):
-        fused_old_np = fused_old[0, 0].cpu().numpy()
-        fused_new_np = fused_new[0, 0].cpu().numpy()
-    elif isinstance(fused_old, dict):
-        # If it returns a dict, extract the fused map
-        fused_old_np = list(fused_old.values())[0][0, 0].cpu().numpy()
-        fused_new_np = list(fused_new.values())[0][0, 0].cpu().numpy()
-    else:
-        fused_old_np = np.array(fused_old)
-        fused_new_np = np.array(fused_new)
-    
-    goal_np = goal[0].cpu().numpy()
-    
-    # 6. Visualization
-    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
-    
-    # Plot: BEFORE finetuning
-    im1 = axes[0].imshow(fused_old_np, cmap='viridis', origin='lower')
-    axes[0].plot(old_path[:, 0], old_path[:, 1], 'r-', linewidth=2, label='Original Path')
-    axes[0].plot(0, 0, 'go', markersize=10, label='Start')
-    axes[0].plot(goal_np[1], goal_np[0], 'r*', markersize=15, label='Goal')
-    axes[0].set_title("Before Fine-tuning")
-    axes[0].legend(loc='upper right')
-    plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.04)
-    
-    # Plot: AFTER finetuning
-    im2 = axes[1].imshow(fused_new_np, cmap='viridis', origin='lower')
-    axes[1].plot(new_path[:, 0], new_path[:, 1], 'b-', linewidth=2, label='New Path')
-    axes[1].plot(0, 0, 'go', markersize=10, label='Start')
-    axes[1].plot(goal_np[1], goal_np[0], 'r*', markersize=15, label='Goal')
-    axes[1].set_title("After Fine-tuning")
-    axes[1].legend(loc='upper right')
-    plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.04)
-    
-    # Plot: Both paths overlaid on delta
-    delta = fused_new_np - fused_old_np
-    max_val = max(abs(np.min(delta)), abs(np.max(delta)), 1e-6)
-    im3 = axes[2].imshow(delta, cmap='seismic', origin='lower', vmin=-max_val, vmax=max_val)
-    axes[2].plot(old_path[:, 0], old_path[:, 1], 'r-', linewidth=2, label='Old Path')
-    axes[2].plot(new_path[:, 0], new_path[:, 1], 'b-', linewidth=2, label='New Path')
-    axes[2].plot(goal_np[1], goal_np[0], 'r*', markersize=15, label='Goal')
-    axes[2].set_title("Costmap Delta + Both Paths\nRed=Before | Blue=After")
-    axes[2].legend(loc='upper right')
-    plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
-    
-    plt.tight_layout()
-    plt.savefig(f"trajectory_comparison_{target_class}.png")
-    plt.show()
-    
-    print(f"Saved to trajectory_comparison_{target_class}.png")
-    
-    return old_path, new_path
 
 if __name__ == "__main__":
     
