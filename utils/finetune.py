@@ -11,6 +11,23 @@ from tqdm import tqdm
 import numpy as np
 from scipy.spatial.distance import cdist
 
+
+def gaussian_blur(x, kernel_size, sigma):
+    """Apply Gaussian blur to tensor."""
+    # Create 1D Gaussian kernel
+    coords = torch.arange(kernel_size, device=x.device).float() - kernel_size // 2
+    kernel_1d = torch.exp(-coords**2 / (2 * sigma**2))
+    kernel_1d = kernel_1d / kernel_1d.sum()
+    
+    # Create 2D kernel
+    kernel_2d = kernel_1d[:, None] * kernel_1d[None, :]
+    kernel_2d = kernel_2d.view(1, 1, kernel_size, kernel_size)
+    
+    # Apply
+    padding = kernel_size // 2
+    return F.conv2d(x, kernel_2d, padding=padding)
+
+
 def compute_path_difference_mask(orig_path, user_path, H, W, device, threshold=5.0, sigma=5.0):
     """
     
@@ -64,6 +81,8 @@ def make_path_target(path, H, W, device, sigma=3.0):
     return target
 
 
+
+
 def finetune_models(
         model,
         batch,
@@ -75,30 +94,127 @@ def finetune_models(
         epochs,
         ddpm,
         planner,
-        w_diffusion=1,
-        w_plan = 1,
-        ):
- 
+        w_diffusion=1.0,
+        w_plan=1.0,
+):
     features, targets, positions, radii, goal = batch
     H, W = 128, 128
- 
-    for contributed_classes, points, mask in edit_regions: 
-        
-        expert_models = []
 
-        for cls in contributed_classes:
-            exp_model = model.experts[cls]
-            exp_model.set_finetune(active=True)
-            expert_models.append(model.experts[cls])
-            
-        optim = AdamW(
-                [p for p in expert_model.parameters() if p.requires_grad],
-                lr=lr
-            
-                )
-        edit_path_target = make_path_target(user_path, H, W, device, sigma=5.0)
+    loss_history = []
+
+    for region_mask, points, affected_classes in edit_regions:
+
+        expert_models = {}
+        x_0_gts = {}
+        conditionings = {}
+
+        for cls in affected_classes:
+            model.experts[cls].set_finetune(active=True)
+            expert_models[cls] = model.experts[cls]
+            x_0_gts[cls] = targets[cls].to(device)
+            conditionings[cls] = features[cls].to(device)
+
+        frozen_maps = {}
+        for cls in model.obstacle_classes:
+            if cls not in affected_classes:
+                frozen_maps[cls] = targets[cls].to(device).detach()
+
+        optimizer = AdamW(
+            [p for expert in expert_models.values() for p in expert.parameters() if p.requires_grad],
+            lr=lr,
+        )
+
+        user_path_target = make_path_target(user_path, H, W, device, sigma=5.0)
         orig_path_target = make_path_target(orig_path, H, W, device, sigma=5.0)
-    
+        edit_mask = compute_path_difference_mask(orig_path, user_path, H, W, device, threshold=5.0)
+
+        for epoch in tqdm(range(epochs), desc="IRL Co-Finetuning"):
+            model.train()
+            optimizer.zero_grad()
+
+            # --- Shared timestep for consistency across experts ---
+            B = list(x_0_gts.values())[0].shape[0]
+            t = torch.randint(0, ddpm.timesteps // 4, (B,), device=device).long()
+
+            x_0_preds = {}
+            noises = {}
+            noise_preds = {}
+
+            for cls in affected_classes:
+                x_t, noise = ddpm.q_sample(x_0_gts[cls], t)
+                noise_pred = expert_models[cls](x_t, t, conditionings[cls])
+                x_0_pred = ddpm.predict_start_from_noise(x_t, t, noise_pred)
+
+                x_0_preds[cls] = x_0_pred
+                noises[cls] = noise
+                noise_preds[cls] = noise_pred
+
+            # --- Contribution-weighted credit assignment ---
+            with torch.no_grad():
+                contributions = {}
+                for cls in affected_classes:
+                    contributions[cls] = (x_0_preds[cls].detach() * edit_mask).sum()
+                total_contrib = sum(contributions.values()) + 1e-8
+                expert_weights = {cls: (contributions[cls] / total_contrib).item() for cls in affected_classes}
+
+            # Weighted diffusion loss — experts more responsible get more regularization
+            loss_diffusion = sum(
+                expert_weights[cls] * F.mse_loss(noise_preds[cls], noises[cls])
+                for cls in affected_classes
+            )
+
+            # Fuse all maps
+            maps_to_fuse = []
+            for cls in model.obstacle_classes:
+                if cls in x_0_preds:
+                    maps_to_fuse.append(x_0_preds[cls])
+                else:
+                    maps_to_fuse.append(frozen_maps[cls])
+
+            stacked = torch.stack(maps_to_fuse, dim=1).squeeze(2)
+            fused_map = torch.logsumexp(stacked, dim=1, keepdim=True)
+            cost_map = F.softplus(fused_map) + 0.1
+
+            pred_visitation = planner(cost_map, goal.to(device))
+
+            # Planning loss in edited region
+            user_target_in_edit = user_path_target * edit_mask
+            user_target_in_edit = user_target_in_edit / (user_target_in_edit.sum() + 1e-8)
+            loss_plan = -(user_target_in_edit * torch.log(pred_visitation + 1e-8)).sum()
+
+            # Preserve original path where unchanged
+            unchanged_mask = 1.0 - edit_mask
+            orig_target_unchanged = orig_path_target * unchanged_mask
+            orig_target_unchanged = orig_target_unchanged / (orig_target_unchanged.sum() + 1e-8)
+            loss_preserve = -(orig_target_unchanged * torch.log(pred_visitation + 1e-8)).sum()
+
+            total_loss = w_diffusion * loss_diffusion + w_plan * loss_plan + 0.5 * loss_preserve
+
+            total_loss.backward()
+            for cls in affected_classes:
+                torch.nn.utils.clip_grad_norm_(expert_models[cls].parameters(), 1.0)
+            optimizer.step()
+
+            loss_history.append({
+                'total': total_loss.item(),
+                'diffusion': loss_diffusion.item(),
+                'plan': loss_plan.item(),
+                'expert_weights': expert_weights.copy(),
+            })
+
+            if epoch % 100 == 0 or epoch == epochs - 1:
+                weight_str = ", ".join(f"{cls}={w:.2f}" for cls, w in expert_weights.items())
+                print(f"\n  [Epoch {epoch}] total={total_loss.item():.4f}, "
+                      f"diffusion={loss_diffusion.item():.4f}, plan={loss_plan.item():.4f}, "
+                      f"weights=[{weight_str}]")
+
+        for cls in affected_classes:
+            model.experts[cls].set_finetune(active=False)
+
+    return loss_history
+
+
+
 
 
 def finetune_models_focused(

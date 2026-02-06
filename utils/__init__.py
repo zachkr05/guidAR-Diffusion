@@ -6,7 +6,7 @@ from .finetune import (
     finetune_models_focused,
     compute_path_difference_mask,
     make_path_target,
-    gaussian_blur,
+    finetune_models,
 )
 
 from .planner import SoftGridPlanner
@@ -43,7 +43,8 @@ __all__ = [
     'finetune_models_focused',
     'compute_path_difference_mask',
     'make_path_target',
-    'gaussian_blur',
+    'finetune_models',
+
     #'finetune_models', 
     # Planner
     'SoftGridPlanner',
