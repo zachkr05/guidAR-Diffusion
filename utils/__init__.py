@@ -3,7 +3,6 @@ Utilities for IRL-based diffusion costmap finetuning.
 """
 
 from .finetune import (
-    finetune_models_focused,
     compute_path_difference_mask,
     make_path_target,
     finetune_models,
@@ -40,7 +39,6 @@ from .utils import (
 
 __all__ = [
     # IRL finetuning
-    'finetune_models_focused',
     'compute_path_difference_mask',
     'make_path_target',
     'finetune_models',

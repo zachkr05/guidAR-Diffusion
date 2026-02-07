@@ -46,7 +46,7 @@ def get_edit_regions(orig_path, user_path, obstacle_classes, batch,
     from scipy.interpolate import interp1d
     from skimage.draw import polygon
     
-    _, _, positions, radii, _ = batch
+    _, _, positions, radii, _, _ = batch
     prob_dict = obtain_probabilities(obstacle_classes, positions, radii, height, width)
     
     # Resample both paths to same number of points
@@ -222,11 +222,11 @@ def collate_ignore_metadata(batch):
     targets = default_collate([item[1] for item in batch])
     goals = default_collate([item[4] for item in batch])
     
-    
+    angles = default_collate([item[5] for item in batch]) 
     positions = [item[2] for item in batch]
     radii = [item[3] for item in batch]
 
-    return features, targets, positions, radii, goals
+    return features, targets, positions, radii, goals, angles
 
 
 
@@ -262,7 +262,7 @@ def compute_path_from_costmap(costmap_dict, goal, device="cuda"):
     
     print(f"Clipped goal: ({goal_y}, {goal_x})")
     
-    path = route_through_array(fused_map, [0, 0], [goal_y, goal_x], fully_connected=True)
+    path = route_through_array(fused_map, [0, 0], [goal_y, goal_x], fully_connected=True, geometric=True)
     
     if path[0] is None:
         raise ValueError("No valid path found through costmap")
@@ -383,10 +383,9 @@ def discrete_frechet_distance(A: np.ndarray, B: np.ndarray) -> float:
 
 
 
-def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position):
+def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position, orientations):
 
     map_np = fused_costmap[0,0].detach().cpu().numpy()
-
 
     max_val = np.max(map_np)
     min_val = np.min(map_np)
@@ -398,14 +397,24 @@ def get_user_adjustments(fused_costmap, obstacle_positions, radii, goal_position
 
     #Tech debt but obstacle positions is a list of dictionaries
     for cls, obs_list in obstacle_positions[0].items():
-        for pos in obs_list:
+        for i, pos in enumerate(obs_list):
             ax.plot(pos[1],pos[0], color=colors[cls], marker='o', label=f'{cls}')
+
+            angle = orientations[cls][i].item()  # assuming orientations passed in same structure
+            arrow_len = 5
+            dx = arrow_len * np.cos(angle)
+            dy = arrow_len * np.sin(angle)
+            ax.arrow(pos[1], pos[0], dx, dy, 
+                     head_width=1.5, head_length=1.0, 
+                     fc=colors[cls], ec=colors[cls], alpha=0.8)
+    
+    print(goal_position)
     goal = goal_position[0]
 
     ax.plot(goal[1], goal[0], color='olive', marker='*', label='goal')
 
     #Get path
-    path = route_through_array(map_np, [0,0], (goal[0],goal[1]), fully_connected=True)
+    path = route_through_array(map_np, [0,0], (goal[0],goal[1]), fully_connected=True, geometric=True)
     path_array = np.array(path[0])
     x_np = path_array[:, 1]
     y_np = path_array[:, 0]

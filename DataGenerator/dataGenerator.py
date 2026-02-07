@@ -110,7 +110,7 @@ class CostmapDataset(Dataset):
             angles[cls] = [obs['angle'] for obs in obstacles]
 
 
-        return features, targets, positions, radii, angles, self.goal
+        return features, targets, positions, radii, self.goal, angles
 
 if __name__ == "__main__":
    cm_data = CostmapDataset() 

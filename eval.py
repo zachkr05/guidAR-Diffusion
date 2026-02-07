@@ -16,7 +16,6 @@ from MoE.ddpm import DDPM
 from MoE.UNet import LightweightUNet
 from train import ExpertEnsemble
 from utils import *
-from utils.finetune import finetune_models_focused
 from utils.planner import SoftGridPlanner
 from skimage.graph import route_through_array
 
@@ -33,30 +32,38 @@ GOAL_MARKER = '*'
 
 
 
-def visualize_simple(before_fused, after_fused, goal, positions, radii, obstacle_classes,
-                     save_path="trajectory_comparison.png"):
-    """
-    Simple 3-panel visualization: Before | After | Delta with paths.
-    before_fused, after_fused: (1,1,H,W) tensors
-    """
+def visualize_simple(before_fused, after_fused, goal, positions, radii, orientation,
+                     obstacle_classes, save_path="trajectory_comparison.png"):
     before_np = before_fused[0, 0].detach().cpu().numpy()
     after_np = after_fused[0, 0].detach().cpu().numpy()
     delta = after_np - before_np
-
     goal_np = goal[0].cpu().numpy() if isinstance(goal, torch.Tensor) else np.array(goal[0])
 
-    # Compute paths through each costmap
     def get_path(costmap_np, g):
         mn, mx = costmap_np.min(), costmap_np.max()
         normed = (costmap_np - mn) / (mx - mn + 1e-8) + 1e-8
-        gy, gx = int(np.clip(g[0], 0, costmap_np.shape[0]-1)), int(np.clip(g[1], 0, costmap_np.shape[1]-1))
-        path_pts, _ = route_through_array(normed, [0, 0], [gy, gx], fully_connected=True, geometric=True)
+        gy = int(np.clip(g[0], 0, costmap_np.shape[0]-1))
+        gx = int(np.clip(g[1], 0, costmap_np.shape[1]-1))
+        path_pts, _ = route_through_array(normed, [0,0], [gy,gx], fully_connected=True, geometric=True)
         path_arr = np.array(path_pts)
-        return path_arr[:, 1], path_arr[:, 0]  # x, y
+        return path_arr[:, 1], path_arr[:, 0]
+
+    def draw_all(ax, positions, radii, orientation, goal_np, obstacle_classes):
+        draw_obstacles(ax, positions, radii, goal_np, obstacle_classes)
+        colors_map = {'chair': 'green', 'table': 'red', 'bomb': 'blue'}
+        for cls in obstacle_classes:
+            for i, pos in enumerate(positions[0][cls]):
+                angle = orientation[cls][i].item()
+                arrow_len = 5
+                dx = arrow_len * np.cos(angle)
+                dy = arrow_len * np.sin(angle)
+                ax.arrow(pos[1], pos[0], dx, dy,
+                         head_width=1.5, head_length=1.0,
+                         fc=colors_map.get(cls, 'white'),
+                         ec=colors_map.get(cls, 'white'), alpha=0.8)
 
     old_x, old_y = get_path(before_np, goal_np)
     new_x, new_y = get_path(after_np, goal_np)
-
     vmin = min(before_np.min(), after_np.min())
     vmax = max(before_np.max(), after_np.max())
     dmax = max(abs(delta).max(), 1e-8)
@@ -66,40 +73,9 @@ def visualize_simple(before_fused, after_fused, goal, positions, radii, obstacle
     # Panel 1: Before
     ax = axes[0]
     im = ax.imshow(before_np, cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
-    ax.plot(old_x, old_y, 'r-', linewidth=2, label="Original Path")
-    ax.plot(0, 0, 'go', markersize=8, label="Start")
-    ax.plot(goal_np[1], goal_np[0], 'r*', markersize=14, label="Goal")
-    ax.set_title("Before Fine-tuning", fontsize=13, fontweight='bold')
-    ax.legend(loc='upper left', fontsize=8)
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-    # Panel 2: After
-    ax = axes[1]
-    im = ax.imshow(after_np, cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
-    ax.plot(new_x, new_y, 'b-', linewidth=2, label="New Path")
-    ax.plot(0, 0, 'go', markersize=8, label="Start")
-    ax.plot(goal_np[1], goal_np[0], 'r*', markersize=14, label="Goal")
-    ax.set_title("After Fine-tuning", fontsize=13, fontweight='bold')
-    ax.legend(loc='upper left', fontsize=8)
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-    # Panel 3: Delta + both paths
-    ax = axes[2]
-    im = ax.imshow(delta, cmap="RdBu_r", vmin=-dmax, vmax=dmax, origin="lower")
-    ax.plot(old_x, old_y, 'r-', linewidth=2, label="Old Path")
-    ax.plot(new_x, new_y, 'b-', linewidth=2, label="New Path")
-    ax.plot(goal_np[1], goal_np[0], 'r*', markersize=14, label="Goal")
-    ax.set_title("Costmap Delta + Both Paths\nRed=Before | Blue=After", fontsize=11, fontweight='bold')
-    ax.legend(loc='upper left', fontsize=8)
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-
-    # Panel 1: Before
-    ax = axes[0]
-    im = ax.imshow(before_np, cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
-    ax.plot(old_x, old_y, 'r-', linewidth=2, label="Original Path")
-    ax.plot(0, 0, 'go', markersize=8, label="Start")
-    draw_obstacles(ax, positions, radii, goal_np, obstacle_classes)
+    ax.plot(old_x, old_y, 'r-', linewidth=2)
+    ax.plot(0, 0, 'go', markersize=8)
+    draw_all(ax, positions, radii, orientation, goal_np, obstacle_classes)
     ax.set_title("Before Fine-tuning", fontsize=13, fontweight='bold')
     ax.legend(handles=[Line2D([],[],color='r',lw=2,label='Original Path'),
                        Line2D([],[],color='w',marker='o',markerfacecolor='g',markersize=8,label='Start')]
@@ -109,22 +85,22 @@ def visualize_simple(before_fused, after_fused, goal, positions, radii, obstacle
     # Panel 2: After
     ax = axes[1]
     im = ax.imshow(after_np, cmap="viridis", vmin=vmin, vmax=vmax, origin="lower")
-    ax.plot(new_x, new_y, 'b-', linewidth=2, label="New Path")
-    ax.plot(0, 0, 'go', markersize=8, label="Start")
-    draw_obstacles(ax, positions, radii, goal_np, obstacle_classes)
+    ax.plot(new_x, new_y, 'b-', linewidth=2)
+    ax.plot(0, 0, 'go', markersize=8)
+    draw_all(ax, positions, radii, orientation, goal_np, obstacle_classes)
     ax.set_title("After Fine-tuning", fontsize=13, fontweight='bold')
     ax.legend(handles=[Line2D([],[],color='b',lw=2,label='New Path'),
                        Line2D([],[],color='w',marker='o',markerfacecolor='g',markersize=8,label='Start')]
               + make_obstacle_legend(obstacle_classes), loc='upper left', fontsize=7)
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    # Panel 3: Delta + both paths
+    # Panel 3: Delta
     ax = axes[2]
     im = ax.imshow(delta, cmap="RdBu_r", vmin=-dmax, vmax=dmax, origin="lower")
-    ax.plot(old_x, old_y, 'r-', linewidth=2, label="Old Path")
-    ax.plot(new_x, new_y, 'b-', linewidth=2, label="New Path")
-    draw_obstacles(ax, positions, radii, goal_np, obstacle_classes)
-    ax.set_title("Costmap Delta + Both Paths\nRed=Before | Blue=After", fontsize=11, fontweight='bold')
+    ax.plot(old_x, old_y, 'r-', linewidth=2)
+    ax.plot(new_x, new_y, 'b-', linewidth=2)
+    draw_all(ax, positions, radii, orientation, goal_np, obstacle_classes)
+    ax.set_title("Costmap Delta\nRed=Before | Blue=After", fontsize=11, fontweight='bold')
     ax.legend(handles=[Line2D([],[],color='r',lw=2,label='Old Path'),
                        Line2D([],[],color='b',lw=2,label='New Path')]
               + make_obstacle_legend(obstacle_classes), loc='upper left', fontsize=7)
@@ -233,7 +209,7 @@ def compute_spline_path(costmap_np, goal, k=3, num_ctrl_pts=10):
 def get_user_input(batch, model, device, ddpm, obstacle_classes):
 
     diffused_cm = {cls: [] for cls in obstacle_classes}
-    features, targets, positions, radii, goal = batch
+    features, targets, positions, radii, goal, orientations = batch
 
     with torch.no_grad():
         for cls in obstacle_classes:
@@ -244,14 +220,14 @@ def get_user_input(batch, model, device, ddpm, obstacle_classes):
             diffused_cm[cls].append(generated)
 
     fused_costmap = fuse_costmaps(diffused_cm)
-    orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
+    orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal, orientations)
 
     return orig_path, user_path, diffused_cm
 
 
 def generate_fused(model, batch, obstacle_classes, device, ddpm):
     """Generate costmaps from each expert and fuse them."""
-    features, targets, positions, radii, goal = batch
+    features, targets, positions, radii, goal, _ = batch
     diffused_cm = {cls: [] for cls in obstacle_classes}
     per_class_maps = {}
     with torch.no_grad():
@@ -562,7 +538,7 @@ def visualize_results(
 def get_user_input(batch,model,device,ddpm, obstacle_classes):
     
     diffused_cm = {cls: [] for cls in obstacle_classes}
-    features, targets, positions, radii, goal = batch 
+    features, targets, positions, radii, goal, orientation = batch 
 
     with torch.no_grad():
         for cls in obstacle_classes:
@@ -575,7 +551,7 @@ def get_user_input(batch,model,device,ddpm, obstacle_classes):
             diffused_cm[cls].append(generated)
     
     fused_costmap = fuse_costmaps(diffused_cm)
-    orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal)
+    orig_path, user_path = get_user_adjustments(fused_costmap, positions, radii, goal, orientation)
         
     return orig_path, user_path, diffused_cm
 
@@ -597,7 +573,7 @@ def evaluate():
 
     # Calculate channels: 2 (curr) + 2*(n-1) (others) + 1 (goal)
     n_classes = len(obstacle_classes)
-    conditioning_channels = 2 + 2 * (n_classes - 1) + 1
+    conditioning_channels = 4 + 4 * (n_classes - 1) + 1
 
     # --- Load Data ---
     print("Generating evaluation dataset...")
@@ -607,7 +583,7 @@ def evaluate():
 
     #Load model
     model = ExpertEnsemble(obstacle_classes, conditioning_channels).to(device)
-    checkpoint = torch.load("checkpoints/checkpoint_epoch5.pt", map_location=device)
+    checkpoint = torch.load("checkpoints/checkpoint_epoch8.pt", map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
 
@@ -664,7 +640,7 @@ def evaluate():
     
     #Eval new scene before finetuning the models
     diffused_cm = {cls: [] for cls in obstacle_classes}
-    features, targets, positions, radii, goal = eval_batch 
+    features, targets, positions, radii, goal, _ = eval_batch 
 
     with torch.no_grad():
         for cls in obstacle_classes:
@@ -691,16 +667,17 @@ def evaluate():
         epochs=500,
         ddpm=ddpm,
         planner=planner,
+        w_directional_reg = 0.5,
     )
 
 
     before_fused_eval, before_per_class_eval = generate_fused(model, eval_batch, obstacle_classes, device, ddpm)
    
     after_fused_eval, _ = generate_fused(model, eval_batch, obstacle_classes, device, ddpm)
-    _, _, eval_positions, eval_radii, eval_goal = eval_batch
+    _, _, eval_positions, eval_radii, eval_goal, eval_orientations = eval_batch
 
     visualize_simple(before_fused_costmap, after_fused_eval, eval_goal,
-                     eval_positions, eval_radii, obstacle_classes,
+                     eval_positions, eval_radii, eval_orientations, obstacle_classes,
                      save_path="trajectory_comparison_eval.png")
 
 if __name__ == "__main__":
