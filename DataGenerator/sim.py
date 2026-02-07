@@ -67,26 +67,39 @@ class Costmap:
         occupancy_map = {}
         binary_occupancy_map = {}
         costmaps = {}
+        sin_angle_maps = {}
+        cos_angle_maps = {}
+
         for idx, (key, obstacle) in enumerate(obstacles_by_class.items()):
             #print(key)
             
             occupancy_map[key] = np.zeros((self.H, self.W))
             costmaps[key] = np.zeros((self.H, self.W))
             binary_occupancy_map[key] = np.zeros((self.H, self.W))
+            sin_angle_maps[key] = np.zeros((self.H, self.W), dtype=np.float32)
+            cos_angle_maps[key] = np.zeros((self.H, self.W), dtype=np.float32)
+    
 
             for item in obstacle:
                 r, c = item['pos']
                 radius = item['rad']
+                angle = item.get('angle', 0.0)
+
                 dist_sqrt = (rows - r)**2 + (cols - c)**2
                 mask = (dist_sqrt <= radius**2)
                 occupancy_map[key][mask] = 1
-                binary_occupancy_map[key][r,c] = 1 
+                binary_occupancy_map[key][r,c] = 1
+
+                sin_angle_maps[key][r, c] = np.sin(angle)
+                cos_angle_maps[key][r, c] = np.cos(angle)
         
         final_mcps = self.calculateCostmaps(occupancy_map)
+       
         
+
         #self.visualize_cm(final_mcps, occupancy_map)
 
-        return final_mcps, occupancy_map, binary_occupancy_map
+        return final_mcps, occupancy_map, binary_occupancy_map, sin_angle_maps, cos_angle_maps
     
     def visualize_cm(self, final_mcps, occupancy_map):
         for key, value in final_mcps.items():

@@ -47,7 +47,7 @@ def train():
 
     
     n_classes = len(obstacle_classes)
-    conditioning_channels = 2 + 2 * (n_classes-1) +1
+    conditioning_channels = 4 + 4 * (n_classes-1) +1
 
     model = ExpertEnsemble(obstacle_classes, conditioning_channels).to(device)
 
@@ -62,7 +62,7 @@ def train():
         epoch_losses = {obs_class: 0.0 for obs_class in obstacle_classes}
 
         pbar = tqdm(loader, desc=f"Epoch {epoch+1} / {epochs}")
-        for features, targets in pbar:
+        for features, targets, _,_,_,_ in pbar:
 
             optimizer.zero_grad()
             total_loss = 0.0

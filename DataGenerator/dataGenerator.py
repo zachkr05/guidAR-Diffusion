@@ -34,7 +34,11 @@ class CostmapDataset(Dataset):
         obstacles_by_class:Dict[str, List[Dict[str, int]]] = {} # obstacle_class -> List of all obstacle of that type, in that list is a sequence of dictionaries that have position and radius
 
         for obs in obstacle_classes:
-            obstacles_by_class[obs] = [{'pos': np.random.randint(low=10, high=self.W-7, size=2, dtype=int), 'rad': int(np.random.randint(low=1,high=3))} for _ in range(np.random.randint(low=self.min_num_obstacles,high= self.max_num_obstacles, dtype=int))] 
+            obstacles_by_class[obs] = [{
+                'pos': np.random.randint(low=10, high=self.W-7, size=2, dtype=int),
+                'rad': int(np.random.randint(low=1, high=3)),
+                'angle': float(np.random.uniform(0, 2 * np.pi))
+            } for _ in range(np.random.randint(low=self.min_num_obstacles, high=self.max_num_obstacles, dtype=int))] 
 
         rows, cols = np.ogrid[:self.H, :self.W]
         occupancy_map = np.zeros((self.H, self.W))
@@ -56,7 +60,7 @@ class CostmapDataset(Dataset):
 
         cm = Costmap(H=self.H, W=self.W)
         cm.goal = self.goal
-        costmaps, radii_maps, binary_occupancy_map = cm.calculateCost(obstacles_by_class)
+        costmaps, radii_maps, binary_occupancy_map, sin_angle_maps, cos_angle_maps = cm.calculateCost(obstacles_by_class)
         
         goal_map = np.zeros((self.H, self.W), dtype=np.float32)
         goal_map[self.goal[0], self.goal[1]] = 1.0
@@ -67,6 +71,8 @@ class CostmapDataset(Dataset):
 
         bin_stack = torch.stack([torch.from_numpy(binary_occupancy_map[k]).float() for k in keys], dim=0)
         rad_stack = torch.stack([torch.from_numpy(radii_maps[k]).float() for k in keys], dim=0)
+        sin_stack = torch.stack([torch.from_numpy(sin_angle_maps[k]).float() for k in keys], dim=0)
+        cos_stack = torch.stack([torch.from_numpy(cos_angle_maps[k]).float() for k in keys], dim=0)
         
         features = {}
         targets = {}
@@ -79,25 +85,32 @@ class CostmapDataset(Dataset):
             
             curr_bin = bin_stack[i:i+1]
             curr_rad = rad_stack[i:i+1]
+            curr_sin = sin_stack[i:i+1]
+            curr_cos = cos_stack[i:i+1]
             
             other_bin = torch.cat([bin_stack[:i], bin_stack[i+1:]], dim=0) 
-            other_rad = torch.cat([rad_stack[:i], rad_stack[i+1:]], dim=0) 
+            other_rad = torch.cat([rad_stack[:i], rad_stack[i+1:]], dim=0)
+            other_sin = torch.cat([sin_stack[:i], sin_stack[i+1:]], dim=0)
+            other_cos = torch.cat([cos_stack[:i], cos_stack[i+1:]], dim=0)
             cost_np = costmaps[key].copy()
            
-            x = torch.cat([curr_bin, curr_rad, other_bin, other_rad, goal_t], dim =0)
+            # Channels: curr_bin, curr_rad, curr_sin, curr_cos, other_bin, other_rad, other_sin, other_cos, goal
+            x = torch.cat([curr_bin, curr_rad, curr_sin, curr_cos,
+                           other_bin, other_rad, other_sin, other_cos, goal_t], dim=0)
             features[key] = x
             
             targets[key] = torch.from_numpy(cost_np).float().unsqueeze(0)
 
         positions = {}
         radii = {}
+        angles = {}
         for cls, obstacles in obstacles_by_class.items():
             positions[cls] = [tuple(obs['pos']) for obs in obstacles]
             radii[cls] = [obs['rad'] for obs in obstacles]
+            angles[cls] = [obs['angle'] for obs in obstacles]
 
 
-        return features, targets, positions, radii, self.goal
-
+        return features, targets, positions, radii, angles, self.goal
 
 if __name__ == "__main__":
    cm_data = CostmapDataset() 
