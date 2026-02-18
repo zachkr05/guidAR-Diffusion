@@ -16,6 +16,41 @@ from torch.utils.data.dataloader import default_collate
 from scipy.spatial import ConvexHull
 from skimage.draw import polygon
 from sklearn.cluster import DBSCAN
+from scipy.interpolate import interp1d
+from skimage.draw import polygon
+
+def compute_spline_path(costmap_np, goal, k=3, num_ctrl_pts=10):
+
+    """
+    Compute a shortest path through a costmap and fit a B-spline to it.
+
+    Returns:
+        path_xy: (N,2) raw path [x, y]
+        spline_xy: (M,2) smooth spline [x, y]
+        P: control points
+        U: knot vector
+    """
+    H, W = costmap_np.shape
+    # Normalize for route_through_array
+    mn, mx = costmap_np.min(), costmap_np.max()
+    normed = (costmap_np - mn) / (mx - mn + 1e-8) + 1e-8
+
+    goal_y = int(np.clip(goal[0], 0, H - 1))
+    goal_x = int(np.clip(goal[1], 0, W - 1))
+
+    path_result = route_through_array(normed, [0, 0], [goal_y, goal_x],
+                                       fully_connected=True, geometric=True)
+    path_array = np.array(path_result[0])
+    x_np = path_array[:, 1]
+    y_np = path_array[:, 0]
+    path_xy = np.column_stack([x_np, y_np])
+
+    x_s, y_s, P, U = generate_clamped_spline(x_np, y_np, k, num_ctrl_pts)
+    spline_xy = np.column_stack([x_s, y_s])
+
+    return path_xy, spline_xy, P, U
+
+
 
 def gaussian_blur(x, kernel_size, sigma):
     """Apply Gaussian blur to tensor."""
@@ -43,9 +78,7 @@ def get_edit_regions(orig_path, user_path, obstacle_classes, batch,
     Returns:
         List of [class_contributions, edit_points, area_mask] tuples
     """
-    from scipy.interpolate import interp1d
-    from skimage.draw import polygon
-    
+   
     _, _, positions, radii, _, _ = batch
     prob_dict = obtain_probabilities(obstacle_classes, positions, radii, height, width)
     
