@@ -56,9 +56,11 @@ def finetune_models(
             lr=lr,
         )
 
+
         # --- Pre-compute targets and masks ---
         user_path_target = make_path_target(user_path, H, W, device, sigma=5.0)
         orig_path_target = make_path_target(orig_path, H, W, device, sigma=5.0)
+
 
         for epoch in tqdm(range(epochs), desc="IRL Co-Finetuning"):
             model.train()

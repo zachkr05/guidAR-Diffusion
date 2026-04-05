@@ -90,8 +90,8 @@ class Costmap:
                 occupancy_map[key][mask] = 1
                 binary_occupancy_map[key][r,c] = 1
 
-                sin_angle_maps[key][r, c] = np.sin(angle)
-                cos_angle_maps[key][r, c] = np.cos(angle)
+                sin_angle_maps[key][mask] = np.sin(angle)
+                cos_angle_maps[key][mask] = np.cos(angle)
         
         final_mcps = self.calculateCostmaps(occupancy_map)
        

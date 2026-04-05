@@ -108,8 +108,6 @@ def evaluate():
     batch_size = 1
     replay_buffer = []
 
-
-
     # Calculate channels: 2 (curr) + 2*(n-1) (others) + 1 (goal)
     n_classes = len(obstacle_classes)
     conditioning_channels = 4 + 4 * (n_classes - 1) + 1
