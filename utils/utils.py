@@ -18,6 +18,10 @@ from skimage.draw import polygon
 from sklearn.cluster import DBSCAN
 from scipy.interpolate import interp1d
 from skimage.draw import polygon
+import torch.nn.functional as F
+
+
+
 
 def compute_spline_path(costmap_np, goal, k=3, num_ctrl_pts=10):
 

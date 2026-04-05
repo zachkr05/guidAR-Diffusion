@@ -10,7 +10,17 @@ from torch.optim import AdamW
 from tqdm import tqdm
 import numpy as np
 from scipy.spatial.distance import cdist
+from .utils import gaussian_blur
 
+#Draw 1's along user path anbd gaussian blur them
+def make_path_target(path, H, W, device, sigma=5.0):
+    target = torch.zeros(1, 1, H, W, device=device)
+    coords = path.astype(int)
+    coords[:, 0] = np.clip(coords[:, 0], 0, W-1)
+    coords[:, 1] = np.clip(coords[:, 1], 0, H-1)
+    target[0, 0, coords[:, 1], coords[:, 0]] = 1.0
+    target = gaussian_blur(target, kernel_size=int(6*sigma+1)|1, sigma=sigma)
+    return target / (target.sum() + 1e-8)
 
 def finetune_models(
         model,
@@ -27,13 +37,13 @@ def finetune_models(
         w_plan=1.0,
         w_preserve=0.5,
         w_directional_reg=1.0,
-):
+        obstacle_classes=None):
     features, targets, positions, radii, goal, orientations = batch
     H, W = 128, 128
 
     loss_history = []
 
-    for region_mask, points, affected_classes in edit_regions:
+    for region_mask, points, affected_classes, class_contributions in edit_regions:
 
         expert_models = {}
         x_0_gts = {}
@@ -62,7 +72,7 @@ def finetune_models(
         orig_path_target = make_path_target(orig_path, H, W, device, sigma=5.0)
 
 
-        for epoch in tqdm(range(epochs), desc="IRL Co-Finetuning"):
+        for epoch in tqdm(range(epochs), desc="IRL Finetuning"):
             model.train()
             optimizer.zero_grad()
 
@@ -81,15 +91,22 @@ def finetune_models(
                 noises[cls] = noise
                 noise_preds[cls] = noise_pred
 
-            with torch.no_grad():
-                contributions = {}
-                for cls in affected_classes:
-                    contributions[cls] = (x_0_preds[cls].detach() * orientation_mask).sum()
-                total_contrib = sum(contributions.values()) + 1e-8
-                expert_weights = {
-                    cls: (contributions[cls] / total_contrib).item()
-                    for cls in affected_classes
-                }
+            # Normalize precomputed contributions to only affected classes
+            total = sum(class_contributions[cls] for cls in affected_classes) + 1e-8
+            expert_weights = {
+                cls: class_contributions[cls] / total
+                for cls in affected_classes
+            }
+
+            #with torch.no_grad():
+            #    contributions = {}
+            #    for cls in affected_classes:
+            #        contributions[cls] = (x_0_preds[cls].detach() * orientation_mask).sum()
+            #    total_contrib = sum(contributions.values()) + 1e-8
+            #    expert_weights = {
+            #        cls: (contributions[cls] / total_contrib).item()
+            #        for cls in affected_classes
+            #    }
 
             # Loss 1: Weighted diffusion loss
             loss_diffusion = sum(
@@ -112,8 +129,8 @@ def finetune_models(
             pred_visitation = planner(cost_map, goal.to(device))
 
             # Loss 2: Planning loss — masked by orientation-aware edit region
-            user_target_in_edit = user_path_target * orientation_mask
-            user_target_in_edit = user_target_in_edit / (user_target_in_edit.sum() + 1e-8)
+            #user_target_in_edit = user_path_target * 
+            user_target_in_edit = user_path_target / (user_path_target.sum() + 1e-8)
             loss_plan = -(user_target_in_edit * torch.log(pred_visitation + 1e-8)).sum()
 
             total_loss = (w_diffusion * loss_diffusion
@@ -134,7 +151,6 @@ def finetune_models(
                 weight_str = ", ".join(f"{cls}={w:.2f}" for cls, w in expert_weights.items())
                 print(f"\n  [Epoch {epoch}] total={total_loss.item():.4f}, "
                       f"diffusion={loss_diffusion.item():.4f}, plan={loss_plan.item():.4f}, "
-                      f"dir_reg={loss_dir_reg.item():.4f}, "
                       f"weights=[{weight_str}]")
 
         for cls in affected_classes:
