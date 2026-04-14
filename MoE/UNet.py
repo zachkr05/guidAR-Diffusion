@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from .time_emb import SinusoidalEmbeddings
 from .attention import AttentionBlock
 from .LoRA import LoRA
-
+from .FiLM import FiLMLayer
 
 class TimeAwareBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_dim):
@@ -55,6 +55,8 @@ class LightweightUNet(nn.Module):
         self.lora_pre_dec2 = LoRA(base_channels * 6, rank =lora_rank, scale = lora_scale)
         self.lora_between = LoRA(base_channels * 2, rank =lora_rank, scale = lora_scale)
 
+        self.film = FiLMLayer(base_channels * 2, cond_channels = in_channels) #This module should the learn the inc/dec cost
+        
         self.final = nn.Conv2d(base_channels, out_channels, kernel_size=1)
 
     def conv_block(self, in_c, out_c, time_dim):
@@ -77,6 +79,7 @@ class LightweightUNet(nn.Module):
         d2_in = self.lora_pre_dec2(d2_in)
         d2 = self.dec2(d2_in, t_emb)
         d2 = self.lora_between(d2)
+        d2 = self.film(d2, conditioning)
 
         d2_up = F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False) 
         d1_in = torch.cat([d2_up, e1], dim=1)
@@ -90,9 +93,10 @@ class LightweightUNet(nn.Module):
             p.requires_grad = not active
 
         if active:
-            for p in self.lora_pre_dec2.parameters():
+            #for p in self.lora_pre_dec2.parameters():
+            #    p.requires_grad = True
+            #for p in self.lora_between.parameters():
+            #    p.requires_grad = True
+            for p in self.film.parameters():
                 p.requires_grad = True
-            for p in self.lora_between.parameters():
-                p.requires_grad = True
-
 
