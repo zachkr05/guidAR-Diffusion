@@ -79,7 +79,9 @@ class LightweightUNet(nn.Module):
         d2_in = self.lora_pre_dec2(d2_in)
         d2 = self.dec2(d2_in, t_emb)
         d2 = self.lora_between(d2)
-        d2 = self.film(d2, conditioning[:, :-1])
+        orient_channels = torch.cat([conditioning[:, 2:4], conditioning[:, 6:8], conditioning[:, 10:12]], dim=1)
+        d2 = self.film(d2, orient_channels)
+
 
         d2_up = F.interpolate(d2, scale_factor=2, mode='bilinear', align_corners=False) 
         d1_in = torch.cat([d2_up, e1], dim=1)
