@@ -31,16 +31,21 @@ class FiLMLayer(nn.Module):
         nn.init.zeros_(self.beta_proj[-1].weight)
         nn.init.zeros_(self.beta_proj[-1].bias)
 
+
     def forward(self, h, conditioning):
-        """
-        Args:
-            h: (B, C, H, W) feature map from LoRA
-            conditioning: (B, cond_channels, H, W) raw conditioning stack
-        Returns:
-            (B, C, H, W) modulated features
-        """
-        weights = conditioning[:, 1:2].abs()  # (B, 1, H, W)
+        # Channel 1 = curr_rad, channels 2,3 = curr_sin, curr_cos
+        rad = conditioning[:, 1:2].abs()  # (B, 1, H, W)
+        sin_map = conditioning[:, 2:3]
+        cos_map = conditioning[:, 3:4]
+        
+        # Orientation magnitude as additional weight: 
+        # nonzero sin/cos means an obstacle is there with a real orientation
+        orient_mag = torch.sqrt(sin_map**2 + cos_map**2 + 1e-8)
+        
+        # Combined weight: radius * orientation presence
+        weights = rad * orient_mag  # (B, 1, H, W)
         weights = weights / (weights.sum(dim=[2, 3], keepdim=True) + 1e-8)
+        
         z = (conditioning * weights).sum(dim=[2, 3])  # (B, cond_channels)
         
         gamma = self.gamma_proj(z).unsqueeze(-1).unsqueeze(-1)
