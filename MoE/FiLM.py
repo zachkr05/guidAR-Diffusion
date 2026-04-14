@@ -39,10 +39,10 @@ class FiLMLayer(nn.Module):
         Returns:
             (B, C, H, W) modulated features
         """
-        # Global average pool conditioning to (B, cond_channels)
-        z = conditioning.mean(dim=[2, 3])
-
-        gamma = self.gamma_proj(z).unsqueeze(-1).unsqueeze(-1)  # (B, C, 1, 1)
+        weights = conditioning[:, 1:2].abs()  # (B, 1, H, W)
+        weights = weights / (weights.sum(dim=[2, 3], keepdim=True) + 1e-8)
+        z = (conditioning * weights).sum(dim=[2, 3])  # (B, cond_channels)
+        
+        gamma = self.gamma_proj(z).unsqueeze(-1).unsqueeze(-1)
         beta = self.beta_proj(z).unsqueeze(-1).unsqueeze(-1)
-
         return gamma * h + beta
