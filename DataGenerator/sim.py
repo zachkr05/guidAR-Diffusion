@@ -2,6 +2,7 @@ import numpy as np
 import skimage.graph
 import matplotlib
 matplotlib.use("tkAgg")   # or "Qt5Agg"
+from skimage.graph import route_through_array
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -29,15 +30,13 @@ class Costmap:
         d = distance_transform_edt(~own_mask).astype(np.float32)
         c01 = np.exp(-(d**2) / (2.0 * sigma**2)).astype(np.float32)  # 1 near, ~0 far
         cost = (2.0 * c01 - 1.0).astype(np.float32)
-#        if other_mask is not None:
- #           cost[other_mask] = -1.0
         return cost
 
     def calculateCostmaps(self, occupancy_map, sigma=6.0):
         mcps = {}
 
         combined_mask = np.any(np.stack(list(occupancy_map.values())) > 0, axis=0)
-        #print(combined_mask)
+        
         for key in occupancy_map:
             own_mask = occupancy_map[key] > 0
             other_mask = combined_mask & (~own_mask)
@@ -49,15 +48,10 @@ class Costmap:
             )
 
             mcps[key] = cost
-        #print(mcps)
         return mcps
 
 
     def calculateCost(self, obstacles_by_class: dict):
-
-        """
-        """
-
 
         self.obstacles_by_class = obstacles_by_class
         
@@ -93,76 +87,16 @@ class Costmap:
                 sin_angle_maps[key][mask] = np.sin(angle)
                 cos_angle_maps[key][mask] = np.cos(angle)
         
-        final_mcps = self.calculateCostmaps(occupancy_map)
-       
-        
+        final_mcps = self.calculateCostmaps(occupancy_map) #map seperated cm's 
 
-        #self.visualize_cm(final_mcps, occupancy_map)
+        print(final_mcps)
+        temp = [cm for _, cm in final_mcps.items()]
+        full_cm = np.zeros_like(temp[0])
+        for cm in temp: full_cm += cm 
+        print(full_cm)
 
-        return final_mcps, occupancy_map, binary_occupancy_map, sin_angle_maps, cos_angle_maps
+        return 
     
-    def visualize_cm(self, final_mcps, occupancy_map):
-        for key, value in final_mcps.items():
-            plt.figure(figsize=(10, 10))  # Create a new figure for each MCP
-            plt.imshow(final_mcps[key], cmap='hot', interpolation='nearest')
-            
-            # Add goal circle
-            circle = patches.Circle((self.goal[1], self.goal[0]), 1, color='blue', fill=False, linewidth=2)
-            plt.gca().add_patch(circle)
-            
-            # Color map for different obstacle classes
-            colors = plt.cm.Set1(range(len(self.obstacles_by_class)))
-            color_idx = 0
-            
-            # Track which classes we've added to legend
-            legend_elements = []
-            
-            for obstacle_class, obstacles in self.obstacles_by_class.items():
-                class_color = colors[color_idx]
-                color_idx += 1
-                
-                # Add one legend entry per class
-                legend_elements.append(patches.Patch(color=class_color, label=obstacle_class))
-                
-                for obstacle in obstacles:
-                    r, c = obstacle['pos']
-                    r = float(r)
-                    c = float(c)
-                    radius = obstacle['rad']
-                    radius = float(radius)
-                    
-                    # Draw circle for each obstacle
-                    circle = patches.Circle((c, r), radius, color=class_color, fill=False, linewidth=2)
-                    plt.gca().add_patch(circle)
-                    
-                    # Improved text positioning - place label above the obstacle
-                    label_offset = radius + 2  # Place text just outside the circle
-                    plt.text(c, r - label_offset, obstacle_class, 
-                            color='white',  # White text for visibility
-                            fontsize=10,
-                            ha='center',
-                            va='bottom',
-                            bbox=dict(boxstyle='round,pad=0.3', 
-                                     facecolor=class_color, 
-                                     alpha=0.8,
-                                     edgecolor='black',
-                                     linewidth=1))
-            
-            # Add legend with custom elements
-            plt.legend(handles=legend_elements, loc='upper right', fontsize=10)
-            
-            # Add goal to legend
-            goal_patch = patches.Circle((0, 0), 1, color='blue', fill=False, linewidth=2)
-            plt.gca().add_artist(plt.legend([goal_patch], ['Goal'], loc='upper left'))
-            
-            plt.colorbar()
-            plt.title(f'MCP: {key}')
-            plt.xlabel('X')
-            plt.ylabel('Y')
-            plt.show()
-            plt.savefig(f"costmap_{key}.png")
-            plt.close()
-
 if __name__ == "__main__":
     cm = Costmap()
 

@@ -34,9 +34,7 @@ def finetune_models(
         ddpm,
         planner,
         w_diffusion=1.0,
-        w_plan=1.0,
-        w_preserve=0.5,
-        w_directional_reg=1.0,
+        w_attract=1,
         obstacle_classes=None,
         w_repulse = 0.2):
     features, targets, positions, radii, goal, orientations = batch
@@ -145,7 +143,7 @@ def finetune_models(
             loss_repulse = (repulsive_target * torch.log(pred_visitation + 1e-8)).sum()
 
             total_loss = (w_diffusion * loss_diffusion
-                          + w_plan * loss_attract 
+                          + w_attract * loss_attract 
                           + w_repulse * loss_repulse)
 
             total_loss.backward()
@@ -155,14 +153,15 @@ def finetune_models(
 
             loss_history.append({
                 'total': total_loss.item(),
-                'diffusion': loss_diffusion.item(),
+                'diffusion': loss_diffusion.item(), 
+                'repulse': loss_repulse.item(),
                 'plan': loss_attract.item(),
             })
 
             if epoch % 100 == 0 or epoch == epochs - 1:
                 weight_str = ", ".join(f"{cls}={w:.2f}" for cls, w in expert_weights.items())
                 print(f"\n  [Epoch {epoch}] total={total_loss.item():.4f}, "
-                      f"diffusion={loss_diffusion.item():.4f}, plan={loss_attract.item():.4f}, "
+                        f"diffusion={loss_diffusion.item():.4f}, loss_attract={loss_attract.item():.4f}, loss_repulse={loss_repulse.item():.4f} "
                       f"weights=[{weight_str}]")
 
         for cls in affected_classes:

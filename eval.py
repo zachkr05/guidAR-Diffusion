@@ -212,7 +212,7 @@ def evaluate():
     data_iter = iter(loader)
 
     model = ExpertEnsemble(obstacle_classes, conditioning_channels).to(device)
-    checkpoint = torch.load("checkpoints/checkpoint_epoch8.pt", map_location=device)
+    checkpoint = torch.load("checkpoints/checkpoint_epoch7.pt", map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
 

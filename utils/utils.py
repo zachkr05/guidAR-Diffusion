@@ -19,7 +19,7 @@ from sklearn.cluster import DBSCAN
 from scipy.interpolate import interp1d
 from skimage.draw import polygon
 import torch.nn.functional as F
-
+from typing import Optional
 
 
 
@@ -339,7 +339,7 @@ def trajectory_cost(orig_path: np.ndarray,
                     wF: float = 0.3,
                     wK: float = 0.01,
                     wL: float = 0.0,
-                    scales: dict | None = None) -> dict:
+                    scales: Optional[dict] = None) -> dict:
     """
     Returns a dict with components + total cost.
 
