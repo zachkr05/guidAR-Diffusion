@@ -93,10 +93,10 @@ class LightweightUNet(nn.Module):
             p.requires_grad = not active
 
         if active:
-            #for p in self.lora_pre_dec2.parameters():
-            #    p.requires_grad = True
-            #for p in self.lora_between.parameters():
-            #    p.requires_grad = True
+            for p in self.lora_pre_dec2.parameters():
+                p.requires_grad = True
+            for p in self.lora_between.parameters():
+                p.requires_grad = True
             for p in self.film.parameters():
                 p.requires_grad = True
 
