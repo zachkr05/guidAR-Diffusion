@@ -33,8 +33,8 @@ class TimeAwareBlock(nn.Module):
 
 class SimpleTrajectoryUNet(nn.Module):
     """
-    Direct conditional UNet with LoRA after every encoder/decoder block
-    and FiLM conditioning on every decoder block.
+    Direct conditional UNet with LoRA after each decoder block
+    and FiLM conditioning at the first decoder block (dec3).
 
     During base training: train everything end-to-end.
     During IRL finetuning: freeze encoder + bottleneck, only train LoRA + FiLM.
@@ -54,13 +54,8 @@ class SimpleTrajectoryUNet(nn.Module):
 
         # Encoder
         self.enc1 = TimeAwareBlock(in_channels, bc, time_dim)
-        self.lora_enc1 = LoRA(bc, rank=lora_rank, scale=lora_scale)
-
         self.enc2 = TimeAwareBlock(bc, bc * 2, time_dim)
-        self.lora_enc2 = LoRA(bc * 2, rank=lora_rank, scale=lora_scale)
-
         self.enc3 = TimeAwareBlock(bc * 2, bc * 4, time_dim)
-        self.lora_enc3 = LoRA(bc * 4, rank=lora_rank, scale=lora_scale)
 
         # Bottleneck
         self.mid1 = TimeAwareBlock(bc * 4, bc * 4, time_dim)
@@ -74,11 +69,9 @@ class SimpleTrajectoryUNet(nn.Module):
 
         self.dec2 = TimeAwareBlock(bc * 4, bc, time_dim)
         self.lora_dec2 = LoRA(bc, rank=lora_rank, scale=lora_scale)
-        self.film_dec2 = FiLMLayer(bc, cond_dim=film_cond_dim)
 
         self.dec1 = TimeAwareBlock(bc * 2, bc, time_dim)
         self.lora_dec1 = LoRA(bc, rank=lora_rank, scale=lora_scale)
-        self.film_dec1 = FiLMLayer(bc, cond_dim=film_cond_dim)
 
         self.final = nn.Sequential(
             nn.GroupNorm(8, bc),
@@ -91,13 +84,8 @@ class SimpleTrajectoryUNet(nn.Module):
 
         # Encoder
         e1 = self.enc1(x, t_emb)
-        e1 = self.lora_enc1(e1)
-
         e2 = self.enc2(F.max_pool2d(e1, 2), t_emb)
-        e2 = self.lora_enc2(e2)
-
         e3 = self.enc3(F.max_pool2d(e2, 2), t_emb)
-        e3 = self.lora_enc3(e3)
 
         # Bottleneck
         m = self.mid1(F.max_pool2d(e3, 2), t_emb)
@@ -114,14 +102,10 @@ class SimpleTrajectoryUNet(nn.Module):
         d2 = F.interpolate(d3, scale_factor=2, mode="bilinear", align_corners=False)
         d2 = self.dec2(torch.cat([d2, e2], dim=1), t_emb)
         d2 = self.lora_dec2(d2)
-        if film_cond is not None:
-            d2 = self.film_dec2(d2, film_cond)
 
         d1 = F.interpolate(d2, scale_factor=2, mode="bilinear", align_corners=False)
         d1 = self.dec1(torch.cat([d1, e1], dim=1), t_emb)
         d1 = self.lora_dec1(d1)
-        if film_cond is not None:
-            d1 = self.film_dec1(d1, film_cond)
 
         return self.final(d1)
 
@@ -131,17 +115,16 @@ class SimpleTrajectoryUNet(nn.Module):
             p.requires_grad = not active
 
         if active:
-            # Unfreeze all LoRA (encoder + decoder)
+            # Unfreeze decoder LoRA
             for module in [
-                self.lora_enc1, self.lora_enc2, self.lora_enc3,
                 self.lora_dec3, self.lora_dec2, self.lora_dec1,
             ]:
                 for p in module.parameters():
                     p.requires_grad = True
 
-            # Unfreeze all FiLM (decoder only)
+            # Unfreeze FiLM (dec3 only)
             for module in [
-                self.film_dec3, self.film_dec2, self.film_dec1,
+                self.film_dec3,
             ]:
                 for p in module.parameters():
                     p.requires_grad = True
