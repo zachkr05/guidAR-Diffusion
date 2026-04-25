@@ -61,8 +61,8 @@ class CostmapDataset(Dataset):
 
         self.goal = np.array(
             [
-                np.random.randint(low=self.W - 7, high=self.H, dtype=int),
-                np.random.randint(low=self.W - 7, high=self.W, dtype=int),
+                np.random.randint(low=5, high=self.H-5, dtype=int),
+                np.random.randint(low=5, high=self.W-5, dtype=int),
             ]
         )
 
