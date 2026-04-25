@@ -81,8 +81,9 @@ class DDPM:
         if t > 0:
             noise = torch.randn_like(x_t)
             sigma = torch.sqrt(beta_t)
-            x_prev_unclamped = mean + sigma * noise
-            
+            #x_prev_unclamped = mean + sigma * noise
+            x_prev = mean + sigma * noise
+
             if return_logprob:
                 x_action = x_prev_unclamped.detach()
 
@@ -91,7 +92,7 @@ class DDPM:
                                 - torch.log(sigma) - 0.5 * log_2pi
                 log_prob = log_prob_elem.flatten(1).sum(dim=1)  # (B,)
             
-            x_prev = torch.clamp(x_prev_unclamped, -1.0, 1.0)
+            #x_prev = torch.clamp(x_prev_unclamped, -1.0, 1.0)
         else:
             x_prev = mean
             x_prev = torch.clamp(x_prev, -1.0, 1.0)

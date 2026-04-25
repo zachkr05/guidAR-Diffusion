@@ -37,6 +37,24 @@ def visualize_samples(model, ddpm, sample_batch, epoch, out_dir, device, num_sam
     gen_np = generated.cpu().numpy()
     tgt_np = targets_dev.cpu().numpy()
 
+    gen_np = generated.cpu().numpy()
+
+    print(
+    "Target stats:",
+    "min=%.3f" % targets_dev.min().item(),
+    "max=%.3f" % targets_dev.max().item(),
+    "mean=%.3f" % targets_dev.mean().item(),
+    "median=%.3f" % targets_dev.median().item(),
+    )
+
+    print(
+        "Generated stats:",
+        "min=%.3f" % generated.min().item(),
+        "max=%.3f" % generated.max().item(),
+        "mean=%.3f" % generated.mean().item(),
+        "median=%.3f" % generated.median().item(),
+    )
+
     fig, axes = plt.subplots(2, num_samples, figsize=(4 * num_samples, 8))
     axes = np.array(axes).reshape(2, num_samples)
     for i in range(num_samples):
