@@ -1,4 +1,4 @@
-from sim import Costmap
+from .sim import Costmap
 import torch
 import torch.nn as nn
 import numpy as np
@@ -17,6 +17,7 @@ class CostmapDataset(Dataset):
         min_total_obstacles=3,
         min_num_obstacles=2,
     ):
+        self._cache = {}
         self.H = H
         self.W = W
         self.cost = np.zeros((H, W), dtype=np.float32)
@@ -33,6 +34,9 @@ class CostmapDataset(Dataset):
         return self.n_samples
 
     def __getitem__(self, idx):
+
+        if idx in self._cache:
+            return self._cache[idx]
 
         obstacle_classes = self.obstacle_classes
         assert self.obstacle_classes is not None
@@ -120,6 +124,9 @@ class CostmapDataset(Dataset):
         # Single target: trajectory heatmap [1, H, W]
         target = torch.from_numpy(trajectory_map).float().unsqueeze(0)
 
+        # In dataset.py, after creating the target
+        target = torch.from_numpy(trajectory_map).float().unsqueeze(0)
+        target = target * 2.0 - 1.0  # [0,1] -> [-1,1]
         positions = {}
         radii = {}
         angles = {}
@@ -128,7 +135,13 @@ class CostmapDataset(Dataset):
             radii[cls] = [obs["rad"] for obs in obstacles]
             angles[cls] = [obs["angle"] for obs in obstacles]
 
-        return features, target, positions, radii, self.goal, angles
+
+        result = (features, target, positions, radii, self.goal, angles)
+        if len(self._cache) < 200:  # only cache small datasets
+            self._cache[idx] = result
+        return result
+     #   return features, target, positions, radii, self.goal, angles
+    #
 
 
 if __name__ == "__main__":
