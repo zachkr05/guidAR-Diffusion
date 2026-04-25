@@ -64,40 +64,30 @@ class DDPM:
         """
         Reverse process
         """
-        
+       
         B = x_t.shape[0]
         t_tensor = torch.full((B,), t, device=x_t.device, dtype=torch.long)
         
         noise_pred = model(x_t, t_tensor, conditioning)
         
+        # Predict x_0 and clamp it (not x_{t-1})
+        x0_pred = self.predict_start_from_noise(x_t, t_tensor, noise_pred)
+        x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
+        
+        # Recompute mean from clamped x_0
         alpha_t = self.alphas[t]
         alpha_bar_t = self.alpha_bar[t]
         beta_t = self.betas[t]
         
-        noise_coef = beta_t / self.sqrt_one_minus_alpha_bar[t]
-        sqrt_recip_alpha = 1.0 / torch.sqrt(alpha_t)
-        mean = sqrt_recip_alpha * (x_t - noise_coef * noise_pred)
+        mean = (torch.sqrt(alpha_t) * (1 - alpha_bar_t / alpha_t) / (1 - alpha_bar_t)) * x_t \
+             + (torch.sqrt(alpha_bar_t / alpha_t) * beta_t / (1 - alpha_bar_t)) * x0_pred
         
         if t > 0:
             noise = torch.randn_like(x_t)
             sigma = torch.sqrt(beta_t)
-            #x_prev_unclamped = mean + sigma * noise
             x_prev = mean + sigma * noise
-
-            if return_logprob:
-                x_action = x_prev_unclamped.detach()
-
-                log_2pi = math.log(2.0 * math.pi)
-                log_prob_elem = -0.5 * ((x_action - mean) / sigma) ** 2 \
-                                - torch.log(sigma) - 0.5 * log_2pi
-                log_prob = log_prob_elem.flatten(1).sum(dim=1)  # (B,)
-            
-            #x_prev = torch.clamp(x_prev_unclamped, -1.0, 1.0)
         else:
             x_prev = mean
-            x_prev = torch.clamp(x_prev, -1.0, 1.0)
-            if return_logprob:
-                log_prob = torch.zeros((B,), device=x_t.device)
         
         if return_logprob:
             return x_prev, log_prob
