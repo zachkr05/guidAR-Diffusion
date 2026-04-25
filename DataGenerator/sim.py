@@ -16,7 +16,7 @@ class Costmap:
         self.cost = np.zeros((H, W), dtype=np.float32)
         self.obstacles = []
         self.obstacles_byclass = {}
-        self.robot = [H, W]
+        self.robot = [H-1, W-1]
         self.goal = [10, 10]
 
 
@@ -94,7 +94,9 @@ class Costmap:
         full_cm = np.zeros_like(temp[0])
         for cm in temp: full_cm += cm 
         print(full_cm)
-
+        
+        path, cost = route_through_array(full_cm, self.robot, self.goal)
+        print(path)
         return 
     
 if __name__ == "__main__":
