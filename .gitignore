@@ -7,8 +7,8 @@ __pycache__/
 
 #/checkpoints
 #checkpoints/
-*.pt
-*.pth
+#*.pt
+#*.pth
 # C extensions
 *.so
 
