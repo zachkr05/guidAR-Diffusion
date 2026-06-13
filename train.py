@@ -174,9 +174,8 @@ def main():
         lr_now = scheduler.get_last_lr()[0]
         print("Epoch %3d | avg loss %.6f | lr %.2e" % (epoch, avg_loss, lr_now))
 
-        if (epoch + 1) % args.save_every == 0 or epoch == args.epochs - 1:
-            ckpt_path = os.path.join(args.out_dir, "checkpoints", "ckpt_epoch_%04d.pt" % epoch)
-            torch.save({
+        ckpt_path = os.path.join(args.out_dir, "checkpoints", "ckpt_epoch_%04d.pt" % epoch)
+        torch.save({
                 "epoch": epoch,
                 "model": model.state_dict(),
                 "optimizer": optimizer.state_dict(),
@@ -184,7 +183,7 @@ def main():
                 "loss_history": loss_history,
                 "args": vars(args),
             }, ckpt_path)
-            print("  saved %s" % ckpt_path)
+        print("  saved %s" % ckpt_path)
 
         if (epoch + 1) % args.viz_every == 0 and viz_batch is not None:
             visualize_samples(model, ddpm, viz_batch, epoch, args.out_dir, device)
