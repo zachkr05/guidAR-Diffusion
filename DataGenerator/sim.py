@@ -38,7 +38,11 @@ class Costmap:
             mcps[key] = cost
         return mcps
 
-    def calculateCost(self, obstacles_by_class: dict, traj_sigma=1.5):
+    def calculateCost(self, obstacles_by_class: dict, traj_sigma=1.5, class_offsets=None):
+        """class_offsets: optional {class_name: pixels}. The offset inflates ONLY the
+        cost mask for that class (-> wider berth in the planned trajectory_map target),
+        while the feature maps (binary/radii/sin/cos) keep the true obstacle radius.
+        class_offsets=None reproduces the original behavior byte-for-byte."""
         self.obstacles_by_class = obstacles_by_class
 
         rows, cols = np.ogrid[: self.H, : self.W]
@@ -56,13 +60,16 @@ class Costmap:
             sin_angle_maps[key] = np.zeros((self.H, self.W), dtype=np.float32)
             cos_angle_maps[key] = np.zeros((self.H, self.W), dtype=np.float32)
 
+            offset = 0.0 if not class_offsets else float(class_offsets.get(key, 0.0))
             for item in obstacle:
                 r, c = item["pos"]
                 radius = item["rad"]
                 angle = item.get("angle", 0.0)
                 dist_sqrt = (rows - r) ** 2 + (cols - c) ** 2
-                mask = dist_sqrt <= radius ** 2
-                occupancy_map[key][mask] = 1
+                mask = dist_sqrt <= radius ** 2                       # true obstacle -> feature maps
+                eff_radius = max(0.0, radius + offset)                # clamp so a big - offset can't grow it
+                cost_mask = dist_sqrt <= eff_radius ** 2              # inflated -> cost/path target
+                occupancy_map[key][cost_mask] = 1
                 binary_occupancy_map[key][r, c] = 1
                 radii_maps[key][mask] = radius
                 sin_angle_maps[key][mask] = np.sin(angle)
